@@ -12,10 +12,17 @@ func _init() -> void:
 		var R := Rules.new()
 		var cfg: Array = []
 		for i in 4:
-			cfg.append({"kind": "cpu", "col": i, "level": 1})
+			cfg.append({"kind": "cpu", "col": i, "level": int(OS.get_environment("LEVEL")) if OS.get_environment("LEVEL") != "" else 1})
 		for i in nleg:
 			cfg.append({"kind": "legend", "col": 4 + i})
-		R.setup(Track.by_key(key), cfg, {"seed": 1000 + k, "weather": met})
+		var gar := int(OS.get_environment("GARAGE")) if OS.get_environment("GARAGE") != "" else 0
+		var lx := int(OS.get_environment("LX")) if OS.get_environment("LX") != "" else 0
+		R.setup(Track.by_key(key), cfg, {"seed": 1000 + k, "weather": met, "garage": gar, "lx": lx, "rivals": lx >= 2 and OS.get_environment("RIV") != "0"})
+		while R.drafting():
+			for c in R.draft_order():
+				if R.needs_pick(c):
+					R.draft_pick(c, AI.draft_pick(R, c))
+			R.draft_advance()
 		while not R.all_finished() and R.round < 200:
 			R.begin_round()
 			if OS.get_environment("DBG") != "": print("round ", R.round, " ", R.cars.map(func(c): return c["s"]))
@@ -30,14 +37,13 @@ func _init() -> void:
 					if c["s"] >= R.track.finish_s() and c["fin_round"] < 0:
 						c["fin_round"] = R.round
 					continue
-				R.reveal(c)
-				var t := {"r": [], "sl": false, "d": []}
+				R.reveal_flip(c)
+				R.reveal_move(c, AI.choices(R, c))
 				for a in AI.react(R, c):
-					t["r"].append(a)
-					if a == "a": R.adrenaline(c)
-					else: R.boost(c)
-				if AI.slip(R, c):
-					t["sl"] = true
+					R.do_action(c, a)
+				for a in AI.react_late(R, c):
+					R.do_action(c, a)
+				while AI.slip(R, c):
 					R.slipstream(c)
 				R.check_corners(c)
 				var d := AI.discards(R, c)

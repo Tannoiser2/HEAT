@@ -1,7 +1,7 @@
 ## HEAT – versione digitale per uso personale: menu, partita, interfaccia e gioco online.
 extends Node3D
 
-const VERSION := "0.1 (21 ottobre)"
+const VERSION := "0.2 (21 ottobre)"
 const F_TITLE := preload("res://assets/font/RacingSansOne-Regular.ttf")
 const F_BODY := preload("res://assets/font/BarlowCondensed-Medium.ttf")
 const F_BOLD := preload("res://assets/font/BarlowCondensed-Bold.ttf")
@@ -16,9 +16,13 @@ const KIND_KEYS := ["human", "cpu", "legend"]
 const KIND_NAMES := ["Giocatore", "Computer", "Leggenda"]
 const LEVEL_NAMES := ["Normale", "Difficile", "Esperto"]
 const PRO_NAMES := ["Normali", "Pro +1", "Pro +2"]
+const LX_LEVEL_TXT := ["Livello 1: carte dell'espansione senza stelle, come le Leggende del gioco base ma fino a 12 auto.",
+	"Livello 2: mazzo verde, abilità della stella (carte Power Up).", "Livello 3: mazzi verde e giallo.",
+	"Livello 4: mazzo giallo.", "Livello 5: mazzi giallo e rosso.", "Livello 6: mazzo rosso, il più difficile."]
 const EXPANSION := {"usa": "base", "italia": "base", "france": "base", "gb": "base", "japan": "Heavy Rain", "mexico": "Heavy Rain",
 	"spagna": "Tunnel Vision", "nederland": "Tunnel Vision", "sudafrica": "Rocky Roads", "germania": "Rocky Roads"}
 const PANEL_W := 410.0
+const SEASONS := ["1961", "1962", "1963", "1964", "1965", "1966", "A sorpresa"]
 const DASH_H := 250.0
 const CARD_W := 104.0
 const CARD_RATIO := 1.5436
@@ -35,6 +39,9 @@ var track_grid: GridContainer
 var track_info: Label
 var panel: PanelContainer
 var dash: PanelContainer
+var lx_box: PanelContainer      # carta Leggenda e Power Up del turno
+var lx_cards: HBoxContainer
+var lx_lbl: Label
 var dash_v: VBoxContainer
 var status_lbl: Label
 var standings_box: VBoxContainer
@@ -43,8 +50,9 @@ var follow_btn: CheckButton
 var anim_seg: HBoxContainer
 var overlay: Control
 var splash_close := Callable()
-var cfg := {"n": 4, "kind": [0, 1, 1, 1, 2, 2, 1, 1], "track": "usa", "laps": 0, "weather": false, "cpu": 1, "pro": 0,
-	"chev": true, "anim": 1, "names": ["", "", "", "", "", "", "", ""]}
+var cfg := {"n": 4, "kind": [0, 1, 1, 1, 2, 2, 1, 1, 2, 2, 2, 2], "track": "usa", "laps": 0, "weather": false, "cpu": 1, "pro": 0,
+	"chev": true, "anim": 1, "garage": 0, "mode": 0, "season": 0, "pool": 0, "names": ["", "", "", "", "", "", "", "", "", "", "", ""],
+	"lx": 0, "riv": true, "lxup": true}
 var race_id := 0
 var racing := false
 var net: Net
@@ -54,6 +62,7 @@ var online_lbl: Label
 var online_name: LineEdit
 var online_code: LineEdit
 var where_seg: HBoxContainer
+var champ := {}         # campionato in corso
 var autoplay := false    # prove automatiche: i giocatori li guida il computer
 var AWAY_MS := 60000
 const CATCHUP_SPEED := 40.0
@@ -80,6 +89,7 @@ func _ready() -> void:
 	_build_setup()
 	_build_panel()
 	_build_dash()
+	_build_lx_box()
 	get_viewport().size_changed.connect(_layout)
 	_preview_track()
 	_layout()
@@ -102,6 +112,12 @@ func _label(t: String, size := 20, col := CREAM, font: Font = null) -> Label:
 	if font:
 		l.add_theme_font_override("font", font)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return l
+
+## Etichetta su una riga sola (per le tabelle).
+func _cell(t: String, size := 20, col := CREAM, font: Font = null) -> Label:
+	var l := _label(t, size, col, font)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
 	return l
 
 func _title(t: String, size := 30, col := CREAM) -> Label:
@@ -256,8 +272,12 @@ func _load_prefs() -> void:
 	for k in cfg:
 		if c.has_section_key("cfg", k):
 			cfg[k] = c.get_value("cfg", k)
-	if cfg["kind"].size() < 8:
-		cfg["kind"] = [0, 1, 1, 1, 2, 2, 1, 1]
+	while cfg["kind"].size() < Rules.MAX_CARS:
+		cfg["kind"].append(2)
+	while cfg["names"].size() < Rules.MAX_CARS:
+		cfg["names"].append("")
+	if cfg["lx"] == 0 and cfg["n"] > Rules.PLAYER_COLORS:
+		cfg["n"] = Rules.PLAYER_COLORS
 
 func _save_prefs() -> void:
 	var c := ConfigFile.new()
@@ -344,12 +364,19 @@ func _fill_setup() -> void:
 		online_box.visible = i == 1)
 	v.add_child(_row("Dove", where_seg))
 	_build_online_box(v)
+	v.add_child(_row("Tipo", _seg(["Corsa singola", "Campionato"], cfg["mode"], func(i):
+		cfg["mode"] = i
+		_save_prefs()
+		_fill_setup())))
 	# auto
 	v.add_child(_section("Auto in gara"))
-	v.add_child(_row("Auto", _seg(["2", "3", "4", "5", "6", "7", "8"], cfg["n"] - 2, func(i):
+	var ncars: Array = []
+	for k in range(2, (Rules.MAX_CARS if cfg["lx"] > 0 else Rules.PLAYER_COLORS) + 1):
+		ncars.append(str(k))
+	v.add_child(_row("Auto", _seg(ncars, cfg["n"] - 2, func(i):
 		cfg["n"] = i + 2
 		_fill_cars()
-		_save_prefs())))
+		_save_prefs(), 15 if ncars.size() > 7 else 18)))
 	cars_box = VBoxContainer.new()
 	cars_box.add_theme_constant_override("separation", 4)
 	v.add_child(cars_box)
@@ -357,9 +384,33 @@ func _fill_setup() -> void:
 	v.add_child(_row("Computer", _seg(LEVEL_NAMES, cfg["cpu"], func(i):
 		cfg["cpu"] = i
 		_save_prefs())))
-	v.add_child(_row("Leggende", _seg(PRO_NAMES, cfg["pro"], func(i):
-		cfg["pro"] = i
-		_save_prefs())))
+	v.add_child(_row("Leggende", _seg(["Gioco base", "Espansione Legends"], 1 if cfg["lx"] > 0 else 0, func(i):
+		cfg["lx"] = 2 if i == 1 else 0
+		if cfg["lx"] == 0:
+			cfg["n"] = mini(cfg["n"], Rules.PLAYER_COLORS)
+		_save_prefs()
+		_fill_setup())))
+	if cfg["lx"] == 0:
+		v.add_child(_row("Bravura", _seg(PRO_NAMES, cfg["pro"], func(i):
+			cfg["pro"] = i
+			_save_prefs())))
+	else:
+		v.add_child(_row("Livello", _seg(["1", "2", "3", "4", "5", "6"], cfg["lx"] - 1, func(i):
+			cfg["lx"] = i + 1
+			_save_prefs()
+			_fill_setup())))
+		v.add_child(_label(LX_LEVEL_TXT[cfg["lx"] - 1], 15, Color(CREAM, 0.6)))
+		if cfg["lx"] >= 2:
+			v.add_child(_row("Rivali", _seg(["No", "Sì"], 1 if cfg["riv"] else 0, func(i):
+				cfg["riv"] = i == 1
+				_save_prefs())))
+		if cfg["mode"] == 1:
+			v.add_child(_row("Campionato", _seg(["Livello fisso", "+1 a ogni gara"], 1 if cfg["lxup"] else 0, func(i):
+				cfg["lxup"] = i == 1
+				_save_prefs(), 16)))
+	if cfg["mode"] == 1:
+		_fill_champ_setup(v)
+		return
 	# pista
 	v.add_child(_section("Pista"))
 	track_grid = GridContainer.new()
@@ -398,6 +449,10 @@ func _fill_setup() -> void:
 	v.add_child(_row("Meteo", _seg(["No", "Meteo e condizioni della strada"], 1 if cfg["weather"] else 0, func(i):
 		cfg["weather"] = i == 1
 		_save_prefs())))
+	v.add_child(_row("Garage", _seg(["Carte iniziali", "3 a caso", "Draft", "Draft completo"], cfg["garage"], func(i):
+		cfg["garage"] = i
+		_save_prefs(), 16)))
+	v.add_child(_label("Garage: ogni auto monta 3 potenziamenti al posto delle carte iniziali. «Draft completo» usa anche le carte avanzate e quelle delle espansioni.", 15, Color(CREAM, 0.6)))
 	v.add_child(_row("Leggende\naggressive", _seg(["Sì (frecce sui rombi)", "No"], 0 if cfg["chev"] else 1, func(i):
 		cfg["chev"] = i == 0
 		_save_prefs())))
@@ -406,11 +461,67 @@ func _fill_setup() -> void:
 		board.step_time = ANIM_STEP[i]
 		_save_prefs())))
 	board.step_time = ANIM_STEP[cfg["anim"]]
+	_setup_footer(v)
+
+func _setup_footer(v: VBoxContainer) -> void:
 	var go := _big_button("Semaforo verde!", RED, CREAM, 28)
 	go.pressed.connect(_on_start_pressed)
 	v.add_child(go)
-	var ver := _label("Versione %s · regole del gioco base, Leggende, meteo e strada, piste di Heavy Rain, Tunnel Vision e Rocky Roads." % VERSION, 14, Color(CREAM, 0.45))
+	var ver := _label("Versione %s · regole del gioco base, Leggende, meteo e strada, Garage e Campionato, espansioni Heavy Rain, Tunnel Vision, Rocky Roads e Legends." % VERSION, 14, Color(CREAM, 0.45))
 	v.add_child(ver)
+
+func _fill_champ_setup(v: VBoxContainer) -> void:
+	v.add_child(_section("Campionato"))
+	v.add_child(_row("Stagione", _seg(SEASONS, cfg["season"], func(i):
+		cfg["season"] = i
+		_save_prefs()
+		_fill_setup(), 15)))
+	var races := _season_events(cfg["season"], 0)
+	var lines: Array = []
+	for e in races:
+		lines.append("%d. %s – %s" % [e["r"], Track.by_key(e["t"]).name, e["name"]] if cfg["season"] < 6 else "%d. pista ed evento a sorpresa" % e["r"])
+	v.add_child(_label("\n".join(lines), 17, Color(CREAM, 0.8)))
+	v.add_child(_label("Prima di ogni gara ognuno monta un potenziamento nuovo (e tiene quelli vecchi); si corre sempre con meteo e condizioni della strada, sponsor e curve della stampa. Punti: 9, 6, 4, 3, 2, 1.", 15, Color(CREAM, 0.6)))
+	v.add_child(_row("Potenziamenti", _seg(["Normali", "Avanzati", "Tutti"], cfg["pool"], func(i):
+		cfg["pool"] = i
+		_save_prefs(), 16)))
+	v.add_child(_row("Leggende\naggressive", _seg(["Sì", "No"], 0 if cfg["chev"] else 1, func(i):
+		cfg["chev"] = i == 0
+		_save_prefs())))
+	v.add_child(_row("Animazioni", _seg(ANIM_NAMES, cfg["anim"], func(i):
+		cfg["anim"] = i
+		board.step_time = ANIM_STEP[i]
+		_save_prefs())))
+	if not races.is_empty():
+		var k: String = races[0]["t"]
+		if track == null or track.key != k:
+			cfg["track"] = k
+			_preview_track()
+	_setup_footer(v)
+
+## Carte Evento di una stagione (6 = a sorpresa: 4 piste diverse con eventi a caso).
+func _season_events(season: int, seed_v: int) -> Array:
+	if season < 6:
+		var y := 1961 + season
+		var out: Array = []
+		for e in Rules.EVENTS:
+			if int(e["y"]) == y:
+				out.append(e.duplicate())
+		out.sort_custom(func(a, b): return a["r"] < b["r"])
+		return out
+	var g := RandomNumberGenerator.new()
+	g.seed = seed_v
+	var keys: Array = Track.all().map(func(t): return t.key)
+	Rules._shuffle(keys, g)
+	var evs: Array = Rules.EVENTS.duplicate()
+	Rules._shuffle(evs, g)
+	var res: Array = []
+	for k in 4:
+		var e: Dictionary = evs[k].duplicate()
+		e["t"] = keys[k]
+		e["r"] = k + 1
+		res.append(e)
+	return res
 
 func _fill_cars() -> void:
 	for c in cars_box.get_children():
@@ -430,13 +541,19 @@ func _fill_cars() -> void:
 			cfg["names"][idx] = t
 			_save_prefs())
 		r.add_child(nm)
-		var opts: Array = KIND_NAMES if i < 6 else KIND_NAMES.slice(0, 2)
+		var opts: Array = KIND_NAMES
+		if i >= Rules.PLAYER_COLORS:
+			opts = ["Leggenda"]
+		elif i >= 6 and cfg["lx"] == 0:
+			opts = KIND_NAMES.slice(0, 2)
 		var k: int = cfg["kind"][i]
-		if k >= opts.size():
+		if i >= Rules.PLAYER_COLORS:
+			k = 0
+		elif k >= opts.size():
 			k = 1
 			cfg["kind"][i] = 1
 		var seg := _seg(opts, k, func(j):
-			cfg["kind"][idx] = j
+			cfg["kind"][idx] = j if idx < Rules.PLAYER_COLORS else 2
 			_save_prefs(), 16)
 		seg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(seg)
@@ -540,6 +657,79 @@ func _build_dash() -> void:
 	dash_v.add_theme_constant_override("separation", 6)
 	dash.add_child(dash_v)
 
+func _build_lx_box() -> void:
+	lx_box = PanelContainer.new()
+	var sb := _style(Color(0.06, 0.06, 0.07, 0.82), 10, 8)
+	sb.border_color = Color("#C9B6FF", 0.7)
+	sb.set_border_width_all(2)
+	lx_box.add_theme_stylebox_override("panel", sb)
+	lx_box.visible = false
+	lx_box.mouse_filter = Control.MOUSE_FILTER_PASS
+	root.add_child(lx_box)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lx_box.add_child(v)
+	var t := _label("Leggende", 17, Color("#C9B6FF"), F_BOLD)
+	v.add_child(t)
+	lx_cards = HBoxContainer.new()
+	lx_cards.add_theme_constant_override("separation", 6)
+	lx_cards.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(lx_cards)
+	lx_lbl = _label("", 14, Color(CREAM, 0.85))
+	lx_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lx_lbl.custom_minimum_size.x = 150
+	v.add_child(lx_lbl)
+
+## Mostra la carta Leggenda (e il Power Up) girata in questo turno, oppure solo il retro.
+func _update_lx_box() -> void:
+	var legends := R != null and racing and R.cars.any(func(c): return c["kind"] == "legend")
+	lx_box.visible = legends
+	if not legends:
+		return
+	for c in lx_cards.get_children():
+		lx_cards.remove_child(c)
+		c.queue_free()
+	var vs := get_viewport().get_visible_rect().size
+	var w := 74.0 if vs.x < 900 else 116.0
+	var texs: Array = []
+	if R.legend_card >= 0:
+		texs.append(load("res://assets/carte/lx_%d.webp" % R.legend_card) if R.lx_level > 0 else load("res://assets/carte/leggenda_%d.webp" % (R.legend_card + 1)))
+	else:
+		texs.append(load("res://assets/carte/lx_retro.webp") if R.lx_level > 0 else load("res://assets/carte/lx_retro.webp"))
+	if R.lx_level >= 2:
+		texs.append(load("res://assets/carte/pu_%d.webp" % R.pu_card) if R.pu_card >= 0 else load("res://assets/carte/pu_retro.webp"))
+	for tx in texs:
+		var tr := TextureRect.new()
+		tr.texture = tx
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+		tr.custom_minimum_size = Vector2(w, w * CARD_RATIO)
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lx_cards.add_child(tr)
+	var lines: Array = []
+	if R.lx_level >= 2 and R.pu_card >= 0:
+		var pu: Dictionary = Rules.POWER_UPS[R.pu_card]
+		lines.append("★ Stella: %s" % Rules.ABILITY_NAMES[pu["s"]])
+		if not R.rivals.is_empty():
+			lines.append("Abilità dei Rivali: %s" % Rules.ABILITY_NAMES[pu["r"]])
+	if not R.rivals.is_empty():
+		lines.append("Rivali: " + ", ".join(R.rivals.map(func(i): return R.cars[i]["name"].replace("Leggenda ", "").capitalize())))
+	lx_lbl.text = "\n".join(lines)
+	var tips: Array = []
+	if R.lx_level >= 2 and R.pu_card >= 0:
+		var pu2: Dictionary = Rules.POWER_UPS[R.pu_card]
+		tips.append("Stella – %s: %s." % [Rules.ABILITY_NAMES[pu2["s"]], Rules.ABILITY_TXT[pu2["s"]]])
+		if not R.rivals.is_empty():
+			tips.append("Rivali – %s: %s." % [Rules.ABILITY_NAMES[pu2["r"]], Rules.ABILITY_TXT[pu2["r"]]])
+		tips.append("Se l'abilità non si può usare, la Leggenda fa 1 casella in più.")
+	lx_box.tooltip_text = "\n".join(tips)
+	lx_lbl.custom_minimum_size.x = w * texs.size() + 6 * (texs.size() - 1)
+	lx_box.size = Vector2.ZERO
+	lx_box.reset_size()
+	_layout()
+	(func(): if is_instance_valid(lx_box): lx_box.reset_size()).call_deferred()
+
 func _clear_dash() -> void:
 	for c in dash_v.get_children():
 		c.queue_free()
@@ -556,7 +746,9 @@ func _layout() -> void:
 			board.screen_shift = Vector2(0, -0.31)
 		else:
 			board.screen_shift = Vector2(-(w + 12) / vs.x, 0)
+		lx_box.visible = false
 	else:
+		lx_box.position = Vector2(10, 10)
 		var pw := PANEL_W if not narrow else vs.x
 		var ph := vs.y if not narrow else vs.y * 0.34
 		panel.position = Vector2(vs.x - pw, 0) if not narrow else Vector2(0, vs.y - ph)
@@ -577,6 +769,9 @@ func _show_dash(on: bool) -> void:
 # ---------- avvio della corsa ----------
 
 func _on_start_pressed() -> void:
+	if cfg["mode"] == 1 and not online_box.visible:
+		_start_champ(_local_game())
+		return
 	if online_box.visible:
 		if online.get("role", "") == "host":
 			_online_start()
@@ -594,12 +789,65 @@ func _local_game() -> Dictionary:
 	var cars: Array = []
 	for i in cfg["n"]:
 		var nm: String = cfg["names"][i].strip_edges()
-		var kind: String = KIND_KEYS[cfg["kind"][i]]
+		var kind: String = KIND_KEYS[cfg["kind"][i]] if i < Rules.PLAYER_COLORS else "legend"
+		if kind == "legend" and cfg["lx"] == 0 and i >= 6:
+			kind = "cpu"
 		if nm == "":
 			nm = Rules.COLOR_NAMES[i] if kind != "legend" else "Leggenda " + Rules.COLOR_NAMES[i].to_lower()
 		cars.append({"kind": kind, "col": i, "name": nm, "level": cfg["cpu"]})
 	return {"seed": g.randi() % 2000000000 + 1, "track": cfg["track"], "laps": cfg["laps"], "cars": cars,
-		"weather": cfg["weather"], "pro": cfg["pro"], "chev": cfg["chev"], "version": VERSION}
+		"weather": cfg["weather"], "pro": cfg["pro"], "chev": cfg["chev"], "garage": cfg["garage"], "version": VERSION,
+		"lx": cfg["lx"], "riv": cfg["riv"], "lxup": cfg["lxup"]}
+
+## Nuovo campionato: la descrizione della partita è la stessa di una corsa, più la stagione.
+func _start_champ(game: Dictionary) -> void:
+	if not game.has("champ"):
+		game["champ"] = {"season": cfg["season"], "pool": cfg["pool"]}
+	champ = {"game": game, "events": _season_events(int(game["champ"]["season"]), int(game["seed"])), "idx": 0, "points": {}, "carry": {}, "last": {}, "results": []}
+	for i in game["cars"].size():
+		champ["points"][i] = 0
+	_start_race(_champ_race_game())
+
+## Corsa del campionato in corso: pista, giri, griglia secondo la classifica, potenziamenti e sponsor.
+func _champ_race_game() -> Dictionary:
+	var base: Dictionary = champ["game"]
+	var e: Dictionary = champ["events"][champ["idx"]]
+	var g := base.duplicate(true)
+	g["seed"] = int(base["seed"]) + 7919 * (champ["idx"] + 1)
+	g["track"] = e["t"]
+	var t := Track.by_key(e["t"])
+	var laps := t.laps
+	if e["id"] == "61-3":
+		laps -= 1
+	if e["id"] in ["62-2", "65-4"]:
+		laps += 1
+	g["laps"] = maxi(1, laps)
+	g["weather"] = true
+	g["garage"] = 4
+	g["pool"] = int(base.get("champ", {}).get("pool", 0))
+	g["event"] = e
+	g["carry"] = champ["carry"]
+	g["race_idx"] = champ["idx"]
+	# espansione Legends: livello che sale e Rivali (dalla seconda gara, le due Leggende prime in classifica)
+	if int(base.get("lx", 0)) > 0:
+		if base.get("lxup", false):
+			g["lx"] = mini(6, int(base["lx"]) + champ["idx"])
+		g["rival_cars"] = []
+		if champ["idx"] > 0:
+			var ls: Array = range(base["cars"].size()).filter(func(i): return base["cars"][i]["kind"] == "legend")
+			ls.sort_custom(func(a, b):
+				if champ["points"][a] != champ["points"][b]:
+					return champ["points"][a] > champ["points"][b]
+				return int(champ["last"].get(a, 99)) < int(champ["last"].get(b, 99)))
+			g["rival_cars"] = ls.slice(0, 2)
+	if champ["idx"] > 0:
+		var order: Array = range(base["cars"].size())
+		order.sort_custom(func(a, b):
+			if champ["points"][a] != champ["points"][b]:
+				return champ["points"][a] > champ["points"][b]
+			return int(champ["last"].get(a, 99)) < int(champ["last"].get(b, 99)))
+		g["grid"] = order
+	return g
 
 func _start_race(game: Dictionary) -> void:
 	race_id += 1
@@ -612,7 +860,12 @@ func _start_race(game: Dictionary) -> void:
 	track = t
 	R = Rules.new()
 	R.setup(t, game["cars"], {"seed": int(game["seed"]), "weather": bool(game.get("weather", false)),
-		"legend_pro": int(game.get("pro", 0)), "chevrons": bool(game.get("chev", true))})
+		"legend_pro": int(game.get("pro", 0)), "chevrons": bool(game.get("chev", true)), "garage": int(game.get("garage", 0)),
+		"pool": int(game.get("pool", 0)), "event": game.get("event", {}), "carry": _int_keys(game.get("carry", {})), "grid": game.get("grid", []),
+		"lx": int(game.get("lx", 0)), "rivals": bool(game.get("riv", false)) and (not game.has("event") or int(game.get("race_idx", 0)) > 0),
+		"rival_cars": game.get("rival_cars", [])})
+	if not online.is_empty():
+		online["race_idx"] = int(game.get("race_idx", 0))
 	setup_box.visible = false
 	panel.visible = true
 	log_box.clear()
@@ -624,6 +877,13 @@ func _start_race(game: Dictionary) -> void:
 	board.follow = true
 	follow_btn.set_pressed_no_signal(true)
 	log_line("[b]%s[/b] · %d giri, %d caselle a giro. Motore con %d Calore, %d carte Stress nel mazzo." % [t.name, t.laps, t.n, t.heat, t.stress])
+	if not R.event.is_empty():
+		log_line("[color=#F0B429][b]Campionato %s, gara %d di %d – %s[/b][/color]" % [SEASONS[int(champ["game"]["champ"]["season"])], champ["idx"] + 1, champ["events"].size(), R.event["name"]])
+		log_line("[color=#F0B429]%s[/color]" % R.event["txt"])
+		if not R.press.is_empty():
+			log_line("Curve della stampa: %s (sponsor a chi le passa in scia o supera il limite di 2 o più)." % ", ".join(R.press.map(func(k): return "curva %d" % (k + 1))))
+		if int(R.event.get("sp", 0)) > 0:
+			log_line("Ogni pilota parte con %d sponsor in mano." % int(R.event["sp"]))
 	if R.weather >= 0:
 		var w: Dictionary = Rules.WEATHER[R.weather]
 		log_line("[color=#8FD3FF]Meteo: [b]%s[/b] – %s.[/color]" % [w["name"], w["txt"]])
@@ -638,7 +898,110 @@ func _start_race(game: Dictionary) -> void:
 		grid_txt.append("%d. %s" % [c["grid"], _car_tag(c)])
 	log_line("Griglia: " + ", ".join(grid_txt))
 	_update_standings()
-	_race_loop(race_id)
+	_race_start(race_id)
+
+func _race_start(my: int) -> void:
+	if R.drafting():
+		await _draft_phase(my)
+		if my != race_id:
+			return
+	elif R.garage == 1:
+		for c in R.cars:
+			if c["kind"] != "legend":
+				log_line("%s monta: %s." % [_car_tag(c), ", ".join(R.upgrades[c["i"]].map(func(id): return "%s (%d)" % [Rules.UPG[id]["n"], id]))])
+	_race_loop(my)
+
+## Draft dei potenziamenti: tre giri, ogni auto sceglie una carta dal mercato.
+func _draft_phase(my: int) -> void:
+	log_line("[color=#F0B429]— Garage: draft dei potenziamenti —[/color]")
+	while my == race_id and R.drafting():
+		var rnd := R.draft_round
+		for car in R.draft_order():
+			if my != race_id:
+				return
+			if not R.needs_pick(car):
+				continue
+			_update_status("Garage, giro %d: sceglie %s" % [rnd, car["name"]])
+			var id := -1
+			if online.is_empty():
+				if _is_local_human(car):
+					var humans := R.cars.filter(func(c): return c["kind"] == "human")
+					if humans.size() > 1:
+						await _pass_device(car, "scegliere un potenziamento")
+					id = await _ask_draft(car)
+				else:
+					id = AI.draft_pick(R, car)
+			else:
+				id = await _online_draft(my, car)
+			if my != race_id:
+				return
+			if not R.draft_pick(car, id):
+				R.draft_pick(car, AI.draft_pick(R, car))
+			await _play_events(my)
+		R.draft_advance()
+	_show_dash(false)
+
+func _ask_draft(car: Dictionary) -> int:
+	var my := race_id
+	_show_dash(true)
+	_clear_dash()
+	dash_v.add_child(_dash_header(car, "Garage, giro %d di 3: scegli un potenziamento" % R.draft_round))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var w := clampf(_card_w(140) * 7.0 / maxf(7.0, R.draft_market.size()), 60.0, 112.0)
+	for id in R.draft_market:
+		var c := Rules.make_upg(int(id))
+		var cv := _card_view(car, c, w)
+		cv.mouse_filter = Control.MOUSE_FILTER_STOP
+		cv.tooltip_text = _upg_text(int(id))
+		cv.gui_input.connect(func(ev):
+			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+				decided.emit(int(id)))
+		row.add_child(cv)
+	var side := VBoxContainer.new()
+	side.custom_minimum_size.x = 230
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var have: Array = R.upgrades[car["i"]]
+	side.add_child(_rich("Già montati: %s" % (", ".join(have.map(func(x): return Rules.UPG[x]["n"])) if not have.is_empty() else "nessuno")))
+	var hint := _small_button("Consiglio")
+	hint.pressed.connect(func(): decided.emit(AI.draft_pick(R, car)))
+	side.add_child(hint)
+	row.add_child(side)
+	dash_v.add_child(row)
+	var id = await decided
+	if my == race_id:
+		_show_dash(false)
+	return int(id) if id != null else -1
+
+## Descrizione in italiano degli effetti di una carta potenziamento.
+func _upg_text(id: int) -> String:
+	var i: Dictionary = Rules.UPG[id]
+	var p: Array = []
+	if i.get("hc", false):
+		return "Carta Calore in più nel mazzo."
+	if i.has("ch"):
+		p.append("valore a scelta " + "/".join(i["ch"].map(func(x): return str(x))))
+	elif i.has("v"):
+		p.append("valore %d" % i["v"])
+	if i.has("plus"):
+		p.append("%d carta/e dal mazzo" % i["plus"])
+	for k in [["heat", "paga %d Calore"], ["scrap", "scarta %d dal mazzo"], ["lim", "limite curve %+d"], ["cool", "raffredda %d"], ["slip", "scia +%d"],
+			["rs", "togli %d Stress"], ["salv", "recupera %d dagli scarti"], ["sc", "riporta %d Calore dagli scarti al motore"], ["dr", "scatto fino a %d"], ["xs", "%d scia extra"]]:
+		if i.has(k[0]):
+			p.append(k[1] % i[k[0]])
+	if i.get("ref", false):
+		p.append("torna in cima al mazzo")
+	if i.get("dp", false):
+		p.append("giocabile durante la reazione")
+	if i.get("acc", false):
+		p.append("accelerazione")
+	return "%s (n. %d): %s." % [i["n"], id, ", ".join(p)]
+
+static func _int_keys(d: Dictionary) -> Dictionary:
+	var out := {}
+	for k in d:
+		out[int(k)] = d[k]
+	return out
 
 func _show_tokens() -> void:
 	board.clear_tokens()
@@ -655,6 +1018,8 @@ func _show_tokens() -> void:
 				var last: int = track.corners[g[-1]]["c"]
 				board.add_token(last + 3, img, 1.3, 1.0)
 			gi += 1
+	for k in R.press:
+		board.add_token(int(track.corners[k]["c"]), "res://assets/carte/stampa.webp", 1.4, -1.0)
 
 func _update_status(t := "") -> void:
 	if t != "":
@@ -707,6 +1072,7 @@ func _is_local_human(car: Dictionary) -> bool:
 func _race_loop(my: int) -> void:
 	while my == race_id and not R.all_finished():
 		R.begin_round()
+		_update_lx_box()
 		_update_status("Giro di tavolo %d" % R.round)
 		log_line("[color=#F0B429]— Turno %d —[/color]" % R.round)
 		# 1-2: marce e carte (tutti insieme)
@@ -735,6 +1101,8 @@ func _race_loop(my: int) -> void:
 		_update_standings()
 		if not online.is_empty():
 			online["done_round"] = R.round
+			if OS.get_environment("HEAT_TRACE") != "":
+				printerr("TRACE ", online.get("role", ""), " r", R.round, " h", R.state_hash(), " ", R.cars.map(func(c): return [c["s"], c["lane"], c["gear"], c["engine"], c["hand"].size()]))
 	if my != race_id:
 		return
 	_show_results()
@@ -769,11 +1137,10 @@ func _car_turn(my: int, car: Dictionary) -> void:
 		await _play_events(my)
 		return
 	_update_status("Turno %d · %s" % [R.round, car["name"]])
-	R.reveal(car)
-	await _play_events(my)
-	if my != race_id:
-		return
+	R.reveal_flip(car)
 	if car["clutter"]:
+		R.reveal_move(car)
+		await _play_events(my)
 		R.end_turn(car)
 		await _play_events(my)
 		return
@@ -791,16 +1158,19 @@ func _car_turn(my: int, car: Dictionary) -> void:
 
 ## Il computer guida: applica le scelte una alla volta (con le animazioni) e restituisce il turno.
 func _cpu_turn(my: int, car: Dictionary) -> Dictionary:
-	var turn := {"r": [], "sl": false, "d": []}
+	var turn := {"bv": AI.choices(R, car), "r": [], "sl": 0, "d": []}
+	R.reveal_move(car, turn["bv"])
+	await _play_events(my)
 	for a in AI.react(R, car):
 		turn["r"].append(a)
-		if a == "a":
-			R.adrenaline(car)
-		else:
-			R.boost(car)
+		R.do_action(car, a)
 		await _play_events(my)
-	if AI.slip(R, car):
-		turn["sl"] = true
+	for a in AI.react_late(R, car):
+		turn["r"].append(a)
+		R.do_action(car, a)
+		await _play_events(my)
+	while AI.slip(R, car) and my == race_id:
+		turn["sl"] += 1
 		R.slipstream(car)
 		await _play_events(my)
 	R.check_corners(car)
@@ -859,14 +1229,71 @@ func _play_events(my: int) -> void:
 			"clutter":
 				log_line("[color=#FF8A50]%s ha la mano intasata di Calore: resta ferma e torna in 1ª.[/color]" % _car_tag(car))
 			"legend_card":
-				log_line("   [color=#C9B6FF]Carta Leggenda n. %d.[/color]" % (e["card"] + 1))
-			"legend":
-				if e["past"]:
-					log_line("%s (Leggenda) affronta la curva." % _car_tag(car))
+				if e.get("lx", false):
+					var deck: String = Rules.LX_CARDS[e["card"]]["d"]
+					var t := "   [color=#C9B6FF]Carta Leggenda (mazzo %s)" % deck
+					if int(e.get("pu", -1)) >= 0:
+						var pu: Dictionary = Rules.POWER_UPS[e["pu"]]
+						t += " · Power Up: stella [b]%s[/b], Rivali [b]%s[/b]" % [Rules.ABILITY_NAMES[pu["s"]], Rules.ABILITY_NAMES[pu["r"]]]
+					log_line(t + ".[/color]")
 				else:
-					log_line("%s (Leggenda) corre fino a %d caselle." % [_car_tag(car), e["top"]])
+					log_line("   [color=#C9B6FF]Carta Leggenda n. %d.[/color]" % (e["card"] + 1))
+				_update_lx_box()
+			"legend":
+				var tags: Array = []
+				if e.get("star", false):
+					tags.append("★")
+				if e.get("rival", false):
+					tags.append("Rivale")
+				var tg := (" [color=#C9B6FF]%s[/color]" % " ".join(tags)) if not tags.is_empty() else ""
+				if e["past"]:
+					log_line("%s (Leggenda)%s affronta la curva." % [_car_tag(car), tg])
+				else:
+					log_line("%s (Leggenda)%s corre fino a %d caselle." % [_car_tag(car), tg, e["top"]])
+			"lx_ab":
+				var nm: String = Rules.ABILITY_NAMES[e["a"]]
+				if e["a"] == "plus":
+					log_line("   [color=#C9B6FF]Abilità non applicabile: +%d.[/color]" % e["n"])
+				elif e["a"] == "draft":
+					log_line("   [color=#C9B6FF]Scatto: +%d.[/color]" % e["n"])
+				else:
+					log_line("   [color=#C9B6FF]%s.[/color]" % nm)
+				board.popup(car["i"], nm if e["a"] != "draft" else "scatto +%d" % e["n"], Color("#C9B6FF"))
 			"cross":
 				pass
+			"upg_heat":
+				log_line("   %s: paga %d Calore." % [Rules.UPG[e["id"]]["n"], e["n"]])
+			"upg_void":
+				log_line("   [color=#FF8A50]%s: non c'è Calore per usarla, si gira una carta dal mazzo.[/color]" % Rules.UPG[e["id"]]["n"])
+			"scrap":
+				log_line("   Scarta %d carte dal mazzo." % e["n"])
+			"rstress":
+				log_line("   Si libera di %d Stress." % e["n"])
+			"salvage":
+				log_line("   Recupera %d carte dagli scarti." % e["n"])
+			"direct":
+				log_line("   Gioca subito %s." % Rules.UPG[e["id"]]["n"])
+			"accel":
+				log_line("   Accelerazione: +%d." % e["n"])
+				board.popup(car["i"], "+%d" % e["n"], GOLD)
+			"draft_move":
+				log_line("   Scatto: +%d caselle." % e["n"])
+			"refresh":
+				log_line("   Rimette %d carta/e in cima al mazzo." % e["n"])
+			"sponsor":
+				log_line("   [color=#E8C170]Nuovo sponsor: %s.[/color]" % Rules.UPG[e["id"]]["n"])
+				board.popup(car["i"], "sponsor!", Color("#E8C170"))
+			"sponsor_used":
+				log_line("   Sponsor %s usato (esce dal gioco)." % Rules.UPG[e["id"]]["n"])
+			"press":
+				log_line("   [color=#E8C170]La stampa è alla curva %d![/color]" % (e["k"] + 1))
+			"out":
+				log_line("[color=#FF5050]%s è eliminata dalla corsa.[/color]" % _car_tag(car))
+				board.hide_car(car["i"])
+			"heat_removed":
+				log_line("   Un Calore esce dal gioco.")
+			"draft":
+				log_line("%s monta [b]%s[/b] (n. %d)." % [_car_tag(car), Rules.UPG[e["id"]]["n"], e["id"]])
 	_update_standings()
 
 # ---------- scelte del giocatore: marcia e carte ----------
@@ -881,7 +1308,11 @@ func _card_tex(car: Dictionary, c: Dictionary) -> Texture2D:
 	match c["t"]:
 		"s", "u":
 			return load("res://assets/carte/%s_%d.webp" % [key, int(c["v"])])
+		"g":
+			return load("res://assets/carte/upg_%d.webp" % int(c["id"]))
 		"h":
+			if c.has("id"):
+				return load("res://assets/carte/upg_%d.webp" % int(c["id"]))
 			return load("res://assets/carte/%s_calore_extra.webp" % key) if c.get("u", false) else load("res://assets/carte/calore.webp")
 		"x":
 			return load("res://assets/carte/stress.webp")
@@ -930,9 +1361,9 @@ func _dash_header(car: Dictionary, text: String) -> HBoxContainer:
 	return h
 
 ## Descrizione dell'esito di una velocità: arrivo, curve, Calore.
-func _outcome_text(car: Dictionary, s0: int, v: int, avail: int) -> Dictionary:
-	var pos := s0 + v
-	var cost := R.corner_cost(car, s0, pos, v)
+func _outcome_text(car: Dictionary, s0: int, v: int, avail: int, at := -999999, lim := 0) -> Dictionary:
+	var pos := s0 + v if at == -999999 else at
+	var cost := R.corner_cost(car, s0, pos, v, lim)
 	var lines := track.crossed(s0, pos).filter(func(x): return x["b"] <= track.finish_s())
 	var t := ""
 	var warn := 0
@@ -941,7 +1372,7 @@ func _outcome_text(car: Dictionary, s0: int, v: int, avail: int) -> Dictionary:
 	else:
 		var names: Array = []
 		for x in lines:
-			names.append("limite %d" % R.corner_limit(x["k"]))
+			names.append("limite %d" % (R.car_limit(car, x["k"]) + lim))
 		t = "curve: " + ", ".join(names)
 		if cost > avail:
 			t += " → [color=#FF5050][b]TESTACODA[/b] (servono %d Calore, ne hai %d)[/color]" % [cost, avail]
@@ -1021,13 +1452,26 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 		side.add_theme_constant_override("separation", 6)
 		var fixed := 0
 		var ns := 0
+		var lim := 0
+		var hcost := 0
+		var spread := 0
 		for i in st["sel"]:
 			var c: Dictionary = car["hand"][i]
 			if c["t"] == "x":
 				ns += 1
+			elif c["t"] == "g":
+				var gi := Rules.ginfo(c)
+				ns += int(gi.get("plus", 0))
+				lim += int(gi.get("lim", 0))
+				hcost += int(gi.get("heat", 0))
+				if gi.has("ch"):
+					fixed += int(gi["ch"].min())
+					spread += int(gi["ch"].max()) - int(gi["ch"].min())
+				else:
+					fixed += int(gi.get("v", 0))
 			else:
 				fixed += Rules.card_value(c)
-		var avail: int = car["engine"] - (R.shift_cost(car, st["g"]) if R.shift_cost(car, st["g"]) < 99 else 0)
+		var avail: int = car["engine"] - hcost - (R.shift_cost(car, st["g"]) if R.shift_cost(car, st["g"]) < 99 else 0)
 		var info := RichTextLabel.new()
 		info.bbcode_enabled = true
 		info.fit_content = true
@@ -1041,15 +1485,21 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 			txt = "Scegli ancora %d carta/e (in %dª si giocano %d carte)." % [need - st["sel"].size(), st["g"], st["g"]]
 			board.clear_ghost()
 		else:
-			if ns == 0:
-				var o := _outcome_text(car, car["s"], fixed, avail)
-				txt = "Velocità [b]%d[/b]: %s" % [fixed, o["t"]]
+			var lo_v := fixed + ns
+			var hi_v := fixed + 4 * ns + spread
+			if lo_v == hi_v:
+				var o := _outcome_text(car, car["s"], lo_v, avail, -999999, lim)
+				txt = "Velocità [b]%d[/b]: %s" % [lo_v, o["t"]]
 				board.show_ghost(o["pos"], 0, o["warn"])
 			else:
-				var lo := _outcome_text(car, car["s"], fixed + ns, avail)
-				var hi := _outcome_text(car, car["s"], fixed + 4 * ns, avail)
-				txt = "Velocità da [b]%d[/b] a [b]%d[/b] (Stress).\nCon %d: %s\nCon %d: %s" % [fixed + ns, fixed + 4 * ns, fixed + ns, lo["t"], fixed + 4 * ns, hi["t"]]
+				var lo := _outcome_text(car, car["s"], lo_v, avail, -999999, lim)
+				var hi := _outcome_text(car, car["s"], hi_v, avail, -999999, lim)
+				txt = "Velocità da [b]%d[/b] a [b]%d[/b]%s.\nCon %d: %s\nCon %d: %s" % [lo_v, hi_v, " (carte dal mazzo)" if ns > 0 else " (valore a scelta)", lo_v, lo["t"], hi_v, hi["t"]]
 				board.show_ghost(hi["pos"], 0, hi["warn"])
+			if hcost > 0:
+				txt += "\nI potenziamenti scelti costano %d Calore." % hcost
+			if lim != 0:
+				txt += "\nLimiti delle curve %+d per te in questo turno." % lim
 		var cool := 3 if st["g"] == 1 else (1 if st["g"] == 2 else 0)
 		if cool > 0 and R.heat_in_hand(car) > 0:
 			txt += "\nIn %dª raffreddi fino a %d Calore." % [st["g"], cool]
@@ -1119,26 +1569,74 @@ func _pass_device(car: Dictionary, what: String) -> void:
 # ---------- scelte del giocatore: reazioni, scia, scarti ----------
 
 func _ask_turn(my: int, car: Dictionary) -> Dictionary:
-	var turn := {"r": [], "sl": false, "d": []}
+	var turn := {"bv": [], "r": [], "sl": 0, "d": []}
 	_show_dash(true)
-	# reazione: adrenalina e spinta
+	# freni: si sceglie il valore dopo aver visto le carte girate
+	var pend := R.pending_choices(car)
+	if not pend.is_empty():
+		var vals: Array = []
+		for k in pend.size():
+			var c: Dictionary = pend[k]
+			_clear_dash()
+			dash_v.add_child(_dash_header(car, "Freni: scegli il valore"))
+			var hb := HBoxContainer.new()
+			hb.add_theme_constant_override("separation", 14)
+			hb.add_child(_played_row(car))
+			var rv := VBoxContainer.new()
+			rv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var base := R.speed(car) - Rules.card_value(c)
+			for x in vals:
+				base += int(x)
+			var t := "Le carte girate valgono [b]%d[/b]%s. Scegli il valore di %s:" % [base, (" (con " + str(car["flips"]) + " dal mazzo)") if not car.get("flips", []).is_empty() else "", Rules.UPG[c["id"]]["n"]]
+			rv.add_child(_rich(t))
+			var br := HBoxContainer.new()
+			br.add_theme_constant_override("separation", 8)
+			for v in Rules.ginfo(c)["ch"]:
+				var o := _outcome_text(car, car["s"], base + int(v), car["engine"])
+				var bv := _small_button("%d → velocità %d" % [v, base + int(v)], Color("#3A5A8C") if o["warn"] == 0 else (Color("#B5651D") if o["warn"] == 1 else Color("#8C2A2A")))
+				bv.tooltip_text = o["t"]
+				bv.pressed.connect(func(): decided.emit(int(v)))
+				br.add_child(bv)
+			rv.add_child(br)
+			hb.add_child(rv)
+			dash_v.add_child(hb)
+			var chosen = await decided
+			if my != race_id:
+				return turn
+			vals.append(int(chosen))
+		turn["bv"] = vals
+	R.reveal_move(car, turn["bv"])
+	await _play_events(my)
+	if my != race_id:
+		return turn
+	# reazione: adrenalina, spinta, gioco diretto, accelerazione, scatto
 	while my == race_id:
 		var can_a := R.can_adrenaline(car)
 		var can_b := R.can_boost(car)
-		if not can_a and not can_b:
+		var dps := R.direct_cards(car)
+		var can_c := R.can_accelerate(car)
+		var dr := R.draft_amount(car)
+		if not can_a and not can_b and dps.is_empty() and not can_c and dr <= 0:
 			break
 		_clear_dash()
 		dash_v.add_child(_dash_header(car, "Reazione"))
 		var v := R.speed(car)
-		var o := _outcome_text(car, car["s0"], v, car["engine"])
-		var info := _rich("Velocità [b]%d[/b], %s.\nSpinta: paghi 1 Calore e giri carte fino a un valore da 1 a 4.%s" % [v, o["t"],
-			"\nSei tra gli ultimi: [b]adrenalina[/b], +1 casella e +1 velocità (e +1 raffreddamento già applicato)." if can_a else ""])
+		var o := _outcome_text(car, car["s0"], v, car["engine"], car["s"])
+		var txt := "Velocità [b]%d[/b], %s." % [v, o["t"]]
+		if can_b:
+			txt += "\nSpinta: paghi 1 Calore e giri carte fino a un valore da 1 a 4."
+		if can_a:
+			txt += "\nSei tra gli ultimi: [b]adrenalina[/b], +1 casella e +1 velocità (il raffreddamento in più è già applicato)."
+		if can_c:
+			txt += "\nAccelerazione: +%d (uno per simbolo usato), conta per le curve." % int(car["sym"])
+		if dr > 0:
+			txt += "\nScatto: %d caselle libere fino a dietro l'auto davanti (non è velocità)." % dr
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 14)
 		hb.add_child(_played_row(car))
 		var rv := VBoxContainer.new()
 		rv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		rv.add_child(info)
+		rv.add_child(_rich(txt))
 		hb.add_child(rv)
 		dash_v.add_child(hb)
 		var br := HBoxContainer.new()
@@ -1152,25 +1650,37 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 			var bb := _small_button("Spinta (%s)" % ("gratis" if free else "1 Calore"), Color("#B5651D"))
 			bb.pressed.connect(func(): decided.emit("b"))
 			br.add_child(bb)
+		for k in dps:
+			var c: Dictionary = car["hand"][k]
+			var bd := _small_button("Gioca %s (%d)" % [Rules.UPG[c["id"]]["n"], int(c["v"])], Color("#6A3F8C"))
+			bd.pressed.connect(func(): decided.emit("p%d" % k))
+			br.add_child(bd)
+		if can_c:
+			var bc := _small_button("Accelera +%d" % int(car["sym"]), Color("#8C6A1F"))
+			bc.pressed.connect(func(): decided.emit("c"))
+			br.add_child(bc)
+		if dr > 0:
+			var bf := _small_button("Scatto +%d" % dr, Color("#1F6A8C"))
+			bf.pressed.connect(func(): decided.emit("f"))
+			br.add_child(bf)
 		var bn := _big_button("Avanti", RED, CREAM, 20)
 		bn.custom_minimum_size.x = 160
 		bn.pressed.connect(func(): decided.emit("next"))
 		br.add_child(bn)
 		rv.add_child(br)
 		var a = await decided
-		if a == "next":
+		if a == null or a == "next":
 			break
 		turn["r"].append(a)
-		if a == "a":
-			R.adrenaline(car)
-		else:
-			R.boost(car)
+		R.do_action(car, a)
 		await _play_events(my)
 	if my != race_id:
 		return turn
-	# scia
-	var amt := R.slip_amount(car)
-	if amt > 0:
+	# scia (anche più di una con le carte "scia extra")
+	while my == race_id:
+		var amt := R.slip_amount(car)
+		if amt <= 0:
+			break
 		_clear_dash()
 		dash_v.add_child(_dash_header(car, "Scia"))
 		var v := R.speed(car)
@@ -1193,28 +1703,29 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 		dash_v.add_child(br2)
 		var yes = await decided
 		board.clear_ghost()
-		if yes:
-			turn["sl"] = true
-			R.slipstream(car)
-			await _play_events(my)
+		if not yes:
+			break
+		turn["sl"] += 1
+		R.slipstream(car)
+		await _play_events(my)
 	if my != race_id:
 		return turn
 	R.check_corners(car)
 	await _play_events(my)
 	# scarti
-	var can_d: bool = R.can_discard(car) and car["hand"].any(func(c): return Rules.discardable(c))
+	var can_d: bool = R.can_discard(car) and car["hand"].any(func(c): return R.can_throw(c))
 	if can_d:
 		var sel: Array = []
 		var refresh := Callable()
 		refresh = func():
 			_clear_dash()
 			dash_v.add_child(_dash_header(car, "Scarti"))
-			dash_v.add_child(_rich("Puoi scartare le carte che non vuoi tenere (non Calore né Stress). Poi peschi fino a 7."))
+			dash_v.add_child(_rich("Puoi scartare le carte che non vuoi tenere%s. Poi peschi fino a %d." % [" (al massimo una)" if R.max_discard() == 1 else "", R.hand_n]))
 			var hand := HBoxContainer.new()
 			hand.add_theme_constant_override("separation", 6)
 			for i in car["hand"].size():
 				var c: Dictionary = car["hand"][i]
-				var ok := Rules.discardable(c)
+				var ok := R.can_throw(c)
 				var cv := _card_view(car, c, _card_w(300), sel.has(i), not ok)
 				if ok:
 					cv.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1224,6 +1735,8 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 								sel.erase(i)
 							else:
 								sel.append(i)
+								while sel.size() > R.max_discard():
+									sel.pop_front()
 							refresh.call())
 				hand.add_child(cv)
 			var bf := _big_button("Fine turno" if sel.is_empty() else "Scarta %d e fine turno" % sel.size(), RED, CREAM, 20)
@@ -1283,21 +1796,33 @@ func _show_results() -> void:
 	grid.columns = 6
 	grid.add_theme_constant_override("h_separation", 16)
 	for h in ["", "Auto", "Pilota", "Calore", "Testacoda", "Spinte"]:
-		grid.add_child(_label(h, 16, Color(CREAM, 0.6), F_BOLD))
+		grid.add_child(_cell(h, 16, Color(CREAM, 0.6), F_BOLD))
 	for c in R.finished:
 		grid.add_child(_title("%d°" % c["place"], 26, GOLD if c["place"] == 1 else CREAM))
 		var sw := HBoxContainer.new()
 		sw.add_child(_swatch(Rules.COLORS[c["col"]], 20))
-		sw.add_child(_label(c["name"], 20, CREAM, F_BOLD))
+		sw.add_child(_cell(c["name"], 20, CREAM, F_BOLD))
 		grid.add_child(sw)
-		grid.add_child(_label({"human": "giocatore", "cpu": "computer", "legend": "Leggenda"}[c["kind"]], 18))
-		grid.add_child(_label(str(c["stats"]["heat"]) if c["kind"] != "legend" else "–", 18))
-		grid.add_child(_label(str(c["stats"]["spin"]) if c["kind"] != "legend" else "–", 18))
-		grid.add_child(_label(str(c["stats"]["boost"]) if c["kind"] != "legend" else "–", 18))
+		grid.add_child(_cell({"human": "giocatore", "cpu": "computer", "legend": "Leggenda"}[c["kind"]], 18))
+		grid.add_child(_cell(str(c["stats"]["heat"]) if c["kind"] != "legend" else "–", 18))
+		grid.add_child(_cell(str(c["stats"]["spin"]) if c["kind"] != "legend" else "–", 18))
+		grid.add_child(_cell(str(c["stats"]["boost"]) if c["kind"] != "legend" else "–", 18))
 	v.add_child(grid)
 	var br := HBoxContainer.new()
 	br.add_theme_constant_override("separation", 10)
-	if online.is_empty():
+	if not champ.is_empty():
+		ov.size = Vector2(minf(900, vs.x - 30), minf(860, vs.y - 30))
+		ov.position = (vs - ov.size) / 2.0
+	if not champ.is_empty():
+		v.add_child(_champ_after_race())
+		if champ["idx"] + 1 < champ["events"].size():
+			var nx := _big_button("Prossima gara", RED)
+			nx.pressed.connect(func():
+				ov.queue_free()
+				champ["idx"] += 1
+				_start_race(_champ_race_game()))
+			br.add_child(nx)
+	elif online.is_empty():
 		var again := _big_button("Rivincita", RED)
 		again.pressed.connect(func():
 			ov.queue_free()
@@ -1311,6 +1836,64 @@ func _show_results() -> void:
 	v.add_child(br)
 	root.add_child(ov)
 	log_line("[color=#F0B429][b]Corsa finita![/b][/color] Vince %s." % _car_tag(R.finished[0]))
+
+## Punti della corsa, classifica del campionato e cosa si porta alla gara successiva.
+func _champ_after_race() -> Control:
+	if int(champ.get("scored", -1)) != champ["idx"]:
+		champ["scored"] = champ["idx"]
+		var pts := {}
+		for c in R.finished:
+			var p: int = Rules.POINTS[c["place"] - 1] if c["place"] <= Rules.POINTS.size() else 0
+			if R.ev("61-3") and c["place"] == 1:
+				p += 2
+			if R.ev("62-3") and c["place"] <= 3:
+				p += 1
+			pts[c["i"]] = p
+			champ["points"][c["i"]] += p
+			champ["last"][c["i"]] = c["place"]
+		for c in R.out:
+			champ["last"][c["i"]] = 99
+		champ["carry"] = R.carry_out()
+		champ["results"].append(pts)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	var last: bool = champ["idx"] + 1 >= champ["events"].size()
+	box.add_child(_title("Campionato %s · %s" % [SEASONS[int(champ["game"]["champ"]["season"])], "classifica finale" if last else "dopo %d gare su %d" % [champ["idx"] + 1, champ["events"].size()]], 26, CREAM))
+	var order: Array = range(R.cars.size())
+	order.sort_custom(func(a, b):
+		if champ["points"][a] != champ["points"][b]:
+			return champ["points"][a] > champ["points"][b]
+		return int(champ["last"].get(a, 99)) < int(champ["last"].get(b, 99)))
+	var g := GridContainer.new()
+	g.columns = 3 + champ["events"].size()
+	g.add_theme_constant_override("h_separation", 14)
+	g.add_child(_cell("", 15))
+	g.add_child(_cell("Pilota", 15, Color(CREAM, 0.6), F_BOLD))
+	for k in champ["events"].size():
+		g.add_child(_cell(Track.by_key(champ["events"][k]["t"]).name.left(10), 15, Color(CREAM, 0.6), F_BOLD))
+	g.add_child(_cell("Totale", 15, GOLD, F_BOLD))
+	var pos := 0
+	for i in order:
+		pos += 1
+		var c: Dictionary = R.cars[i]
+		g.add_child(_title("%d°" % pos, 22, GOLD if pos == 1 else CREAM))
+		var sw := HBoxContainer.new()
+		sw.add_child(_swatch(Rules.COLORS[c["col"]], 18))
+		sw.add_child(_cell(c["name"], 18, CREAM, F_BOLD))
+		g.add_child(sw)
+		for k in champ["events"].size():
+			var txt := "·"
+			if k < champ["results"].size():
+				txt = str(champ["results"][k].get(i, 0))
+			g.add_child(_cell(txt, 18))
+		g.add_child(_cell(str(champ["points"][i]), 20, GOLD, F_BOLD))
+	box.add_child(g)
+	if last:
+		box.add_child(_title("Campione del mondo: %s!" % R.cars[order[0]]["name"], 30, GOLD))
+	else:
+		var e: Dictionary = champ["events"][champ["idx"] + 1]
+		box.add_child(_label("Prossima gara: %s – %s. %s" % [Track.by_key(e["t"]).name, e["name"], e["txt"]], 17, Color(CREAM, 0.8)))
+	return box
 
 func _ask_menu() -> void:
 	var d := ConfirmationDialog.new()
@@ -1332,6 +1915,7 @@ func _back_to_menu() -> void:
 	if not online.is_empty() and net:
 		net.remember_room("")
 	online = {}
+	champ = {}
 	decided.emit(null)
 	panel.visible = false
 	dash.visible = false
@@ -1480,6 +2064,8 @@ func _online_start() -> void:
 	var room := await net.room(code)
 	var names := _seat_names(room)
 	var game := _local_game()
+	if cfg["mode"] == 1:
+		game["champ"] = {"season": cfg["season"], "pool": cfg["pool"]}
 	var humans := 0
 	for i in game["cars"].size():
 		var c: Dictionary = game["cars"][i]
@@ -1502,7 +2088,14 @@ func _online_begin(game: Dictionary, names: Dictionary) -> void:
 	online["names"] = names
 	if str(game.get("version", VERSION)) != VERSION:
 		_msg("Attenzione: la stanza è stata creata con la versione %s, tu hai la %s. Ricarica la pagina per allinearti." % [game.get("version", "?"), VERSION])
-	_start_race(game)
+	if game.has("champ"):
+		_start_champ(game)
+	else:
+		_start_race(game)
+
+## Numero del turno sul database: diverso per ogni corsa del campionato.
+func _rk() -> int:
+	return int(online.get("race_idx", 0)) * 1000 + R.round
 
 func _seat_label(car: Dictionary) -> String:
 	if car["i"] == online.get("seat", -1):
@@ -1514,7 +2107,7 @@ func _online_plans(my: int) -> Dictionary:
 	var code: String = online["code"]
 	var h0 := R.state_hash()
 	var needed := R.racing().filter(func(c): return c["kind"] != "legend")
-	var got := await net.choices(code, "plans", R.round)
+	var got := await net.choices(code, "plans", _rk())
 	if my != race_id:
 		return {}
 	if got.size() >= needed.size():
@@ -1526,7 +2119,7 @@ func _online_plans(my: int) -> Dictionary:
 	# la mia auto
 	for car in needed:
 		if car["i"] == online.get("seat", -1) and not got.has(str(car["i"])) and car["kind"] == "human":
-			var p := await _ask_plan(car)
+			var p: Dictionary = AI.plan(R, car) if autoplay else await _ask_plan(car)
 			if my != race_id:
 				return {}
 			p["h"] = h0
@@ -1540,7 +2133,7 @@ func _online_plans(my: int) -> Dictionary:
 				await _post_retry(my, "plans", car["i"], p)
 	var since := Time.get_ticks_msec()
 	while my == race_id:
-		got = await net.choices(code, "plans", R.round)
+		got = await net.choices(code, "plans", _rk())
 		if my != race_id:
 			return {}
 		var missing := needed.filter(func(c): return not got.has(str(c["i"])))
@@ -1562,17 +2155,37 @@ func _online_plans(my: int) -> Dictionary:
 				var p := AI.plan(R, car)
 				p["h"] = h0
 				p["cpu"] = true
-				await net.post(code, "plans", R.round, car["i"], p)
+				await net.post(code, "plans", _rk(), car["i"], p)
 			since = Time.get_ticks_msec()
 		await get_tree().create_timer(1.0).timeout
 	return {}
 
-func _post_retry(my: int, kind: String, idx: int, data: Dictionary) -> bool:
+func _online_draft(my: int, car: Dictionary) -> int:
 	var code: String = online["code"]
+	var rr := 100000 + int(online.get("race_idx", 0)) * 100 + R.draft_round * 10
+	var got := await net.choice(code, "plans", rr, car["i"])
+	if got.is_empty():
+		var mine: bool = car["i"] == online.get("seat", -1) and car["kind"] == "human"
+		if mine or (online["role"] == "host" and car["kind"] == "cpu"):
+			var id: int = AI.draft_pick(R, car) if (not mine or autoplay) else await _ask_draft(car)
+			if my != race_id:
+				return -1
+			await _post_retry(my, "plans", car["i"], {"id": id}, rr)
 	while my == race_id:
-		if await net.post(code, kind, R.round, idx, data):
+		got = await net.choice(code, "plans", rr, car["i"])
+		if not got.is_empty():
+			return int(got.get("id", -1))
+		await get_tree().create_timer(0.8).timeout
+	return -1
+
+func _post_retry(my: int, kind: String, idx: int, data: Dictionary, rnd := -1) -> bool:
+	var code: String = online["code"]
+	if rnd < 0:
+		rnd = _rk()
+	while my == race_id:
+		if await net.post(code, kind, rnd, idx, data):
 			return true
-		var again := await net.choice(code, kind, R.round, idx)
+		var again := await net.choice(code, kind, rnd, idx)
 		if not again.is_empty():
 			return false     # c'era già (l'ha scritta qualcun altro): vale quella
 		_update_status("Connessione persa, riprovo…")
@@ -1582,7 +2195,7 @@ func _post_retry(my: int, kind: String, idx: int, data: Dictionary) -> bool:
 ## Reazioni, scia e scarti di un'auto online: chi la guida gioca e pubblica, gli altri applicano.
 func _online_turn(my: int, car: Dictionary) -> Dictionary:
 	var code: String = online["code"]
-	var existing := await net.choice(code, "turns", R.round, car["i"])
+	var existing := await net.choice(code, "turns", _rk(), car["i"])
 	if my != race_id:
 		return {}
 	if not existing.is_empty():
@@ -1594,7 +2207,7 @@ func _online_turn(my: int, car: Dictionary) -> Dictionary:
 	if mine or mine_cpu:
 		var snap := R.snapshot()
 		var turn: Dictionary = {}
-		if mine:
+		if mine and not autoplay:
 			turn = await _ask_turn(my, car)
 		else:
 			turn = await _cpu_turn(my, car)
@@ -1602,7 +2215,7 @@ func _online_turn(my: int, car: Dictionary) -> Dictionary:
 			return {}
 		if not await _post_retry(my, "turns", car["i"], turn):
 			# nel frattempo l'host ha guidato al nostro posto: vale la sua scelta
-			var other := await net.choice(code, "turns", R.round, car["i"])
+			var other := await net.choice(code, "turns", _rk(), car["i"])
 			R.restore(snap)
 			board.place_now(car["i"], car["s"], car["lane"])
 			R.apply_turn(car, _norm_turn(other))
@@ -1611,7 +2224,7 @@ func _online_turn(my: int, car: Dictionary) -> Dictionary:
 		return turn
 	var since := Time.get_ticks_msec()
 	while my == race_id:
-		var t := await net.choice(code, "turns", R.round, car["i"])
+		var t := await net.choice(code, "turns", _rk(), car["i"])
 		if my != race_id:
 			return {}
 		if not t.is_empty():
@@ -1623,8 +2236,8 @@ func _online_turn(my: int, car: Dictionary) -> Dictionary:
 			log_line("[color=#FF9F40]%s non risponde: per questo turno guida il computer.[/color]" % car["name"])
 			var snap := R.snapshot()
 			var turn := await _cpu_turn(my, car)
-			if not await net.post(code, "turns", R.round, car["i"], turn):
-				var other := await net.choice(code, "turns", R.round, car["i"])
+			if not await net.post(code, "turns", _rk(), car["i"], turn):
+				var other := await net.choice(code, "turns", _rk(), car["i"])
 				R.restore(snap)
 				board.place_now(car["i"], car["s"], car["lane"])
 				R.apply_turn(car, _norm_turn(other))

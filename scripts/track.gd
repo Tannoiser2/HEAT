@@ -135,6 +135,10 @@ func sector_of(s: int) -> int:
 	return best
 
 func spot_uv(s: int, lane: int) -> Vector2:
+	if lane >= 2:
+		# a bordo pista, fuori dalla linea ideale (Leggenda agile in una casella piena)
+		var a := spot_uv(s, 0)
+		return a + (a - spot_uv(s, 1)) * 0.85
 	var sp: Array = space(s)["spots"][lane]
 	return Vector2(float(sp[0]), float(sp[1]))
 
