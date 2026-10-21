@@ -4,5 +4,8 @@
   "descrizione": "Corse automobilistiche anni '60 a carte: marce, Calore e curve. Leggende fino a 12 auto, meteo, garage, campionato e tutte le espansioni.",
   "online": true,
   "sezione": "conversione",
-  "ordine": 11
+  "ordine": 11,
+  "generi": [
+    "Sport e corse"
+  ]
 }
