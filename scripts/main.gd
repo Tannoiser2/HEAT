@@ -1,7 +1,7 @@
 ## HEAT – versione digitale per uso personale: menu, partita, interfaccia e gioco online.
 extends Node3D
 
-const VERSION := "0.4 (21 ottobre)"
+const VERSION := "0.5 (21 ottobre)"
 const F_TITLE := preload("res://assets/font/RacingSansOne-Regular.ttf")
 const F_BODY := preload("res://assets/font/BarlowCondensed-Medium.ttf")
 const F_BOLD := preload("res://assets/font/BarlowCondensed-Bold.ttf")
@@ -1393,9 +1393,12 @@ func _outcome_text(car: Dictionary, s0: int, v: int, avail: int, at := -999999, 
 func _ask_plan(car: Dictionary) -> Dictionary:
 	var my := race_id
 	_show_dash(true)
-	var st := {"g": int(car["gear"]), "sel": []}
-	var refresh := Callable()
-	refresh = func():
+	var st := {"g": int(car["gear"]), "sel": [], "done": false}
+	var rf := {}   # contenitore: le funzioni anonime catturano le variabili locali per valore
+	rf["f"] = func():
+		if st["done"] or my != race_id:
+			return
+		st["sel"] = st["sel"].filter(func(x): return x < car["hand"].size())
 		_clear_dash()
 		dash_v.add_child(_dash_header(car, "Turno %d · scegli marcia e carte" % R.round))
 		var row := HBoxContainer.new()
@@ -1427,13 +1430,14 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 				st["g"] = g
 				while st["sel"].size() > g:
 					st["sel"].pop_back()
-				refresh.call())
+				rf["f"].call())
 			gg.add_child(b)
 		gears.add_child(gg)
 		row.add_child(gears)
 		# mano
 		var hand := HBoxContainer.new()
 		hand.add_theme_constant_override("separation", 6)
+		hand.set_meta("mano", true)
 		for i in car["hand"].size():
 			var c: Dictionary = car["hand"][i]
 			var ok := Rules.playable(c)
@@ -1449,7 +1453,7 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 						else:
 							st["sel"].pop_front()
 							st["sel"].append(i)
-						refresh.call())
+						rf["f"].call())
 			hand.add_child(cv)
 		row.add_child(hand)
 		# riepilogo e tasti
@@ -1520,7 +1524,7 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 			var p := AI.plan(R, car)
 			st["g"] = p["g"]
 			st["sel"] = p["c"].duplicate()
-			refresh.call())
+			rf["f"].call())
 		br.add_child(hint)
 		var ok_b := _big_button("Via così", RED, CREAM, 22)
 		ok_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1530,12 +1534,13 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 			if not chk["ok"]:
 				_msg(chk["msg"])
 				return
+			st["done"] = true
 			decided.emit({"g": st["g"], "c": st["sel"].duplicate()}))
 		br.add_child(ok_b)
 		side.add_child(br)
 		row.add_child(side)
 		dash_v.add_child(row)
-	refresh.call()
+	rf["f"].call()
 	if board.follow:
 		board.focus(board.car_world(car["i"]), 15.0)
 	board.highlight(car["i"])
@@ -1722,8 +1727,8 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 	var can_d: bool = R.can_discard(car) and car["hand"].any(func(c): return R.can_throw(c))
 	if can_d:
 		var sel: Array = []
-		var refresh := Callable()
-		refresh = func():
+		var rf := {}   # contenitore: le funzioni anonime catturano le variabili locali per valore
+		rf["f"] = func():
 			_clear_dash()
 			dash_v.add_child(_dash_header(car, "Scarti"))
 			dash_v.add_child(_rich("Puoi scartare le carte che non vuoi tenere%s. Poi peschi fino a %d." % [" (al massimo una)" if R.max_discard() == 1 else "", R.hand_n]))
@@ -1743,14 +1748,14 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 								sel.append(i)
 								while sel.size() > R.max_discard():
 									sel.pop_front()
-							refresh.call())
+							rf["f"].call())
 				hand.add_child(cv)
 			var bf := _big_button("Fine turno" if sel.is_empty() else "Scarta %d e fine turno" % sel.size(), RED, CREAM, 20)
 			bf.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			bf.pressed.connect(func(): decided.emit(sel.duplicate()))
 			hand.add_child(bf)
 			dash_v.add_child(hand)
-		refresh.call()
+		rf["f"].call()
 		var d = await decided
 		turn["d"] = d
 		R.discard(car, d)
