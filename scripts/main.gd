@@ -1,7 +1,7 @@
 ## HEAT – versione digitale per uso personale: menu, partita, interfaccia e gioco online.
 extends Node3D
 
-const VERSION := "0.2 (21 ottobre)"
+const VERSION := "0.3 (21 ottobre)"
 const F_TITLE := preload("res://assets/font/RacingSansOne-Regular.ttf")
 const F_BODY := preload("res://assets/font/BarlowCondensed-Medium.ttf")
 const F_BOLD := preload("res://assets/font/BarlowCondensed-Bold.ttf")

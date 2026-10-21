@@ -161,8 +161,95 @@ func clear_cars() -> void:
 	car_state.clear()
 	_anim.clear()
 
-## Auto da corsa anni '60 costruita con forme semplici: muso a siluro, ruote scoperte, pilota col casco.
+const CAR_MODEL := "res://assets/auto/monoposto.glb"
+const CAR_LEN := 1.17            # lunghezza dell'auto sulla plancia
+static var _car_scene: PackedScene
+static var _car_mats := {}       # colore -> ShaderMaterial
+
+## Ricolora la carrozzeria rossa del modello Meshy nel colore della scuderia, lasciando gomme,
+## cromature e pilota come sono.
+const PAINT_SHADER := """
+shader_type spatial;
+render_mode cull_disabled;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
+uniform sampler2D mr_tex : hint_default_white, filter_linear_mipmap;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap;
+uniform bool has_mr = false;
+uniform bool has_normal = false;
+uniform vec4 team : source_color = vec4(1.0, 0.0, 0.0, 1.0);
+vec3 rgb2hsv(vec3 c) {
+	vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+	vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+	vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+	float d = q.x - min(q.w, q.y);
+	return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1e-10)), d / (q.x + 1e-10), q.x);
+}
+void fragment() {
+	vec4 a = texture(albedo_tex, UV);
+	vec3 hsv = rgb2hsv(a.rgb);
+	float hue_d = min(hsv.x, 1.0 - hsv.x);
+	float m = smoothstep(0.09, 0.04, hue_d) * smoothstep(0.35, 0.55, hsv.z) * smoothstep(0.35, 0.6, hsv.y);
+	float shade = clamp(hsv.z / 0.82, 0.0, 1.25);
+	vec3 painted = team.rgb * shade;
+	ALBEDO = mix(a.rgb, painted, m);
+	float metal = 0.0;
+	float rough = 0.6;
+	if (has_mr) {
+		vec4 mr = texture(mr_tex, UV);
+		metal = mr.b;
+		rough = mr.g;
+	}
+	METALLIC = mix(metal, 0.25, m);
+	ROUGHNESS = mix(rough, 0.3, m);
+	if (has_normal) {
+		NORMAL_MAP = texture(normal_tex, UV).rgb;
+	}
+}
+"""
+
+## Monoposto anni '60 (modello Meshy) nel colore dato; se il modello manca, quella a forme semplici.
 static func make_car(col: Color, number: int) -> Node3D:
+	if _car_scene == null and ResourceLoader.exists(CAR_MODEL):
+		_car_scene = load(CAR_MODEL)
+	if _car_scene != null:
+		return _make_model_car(col)
+	return _make_simple_car(col, number)
+
+static func _make_model_car(col: Color) -> Node3D:
+	var root := Node3D.new()
+	var inst: Node3D = _car_scene.instantiate()
+	root.add_child(inst)
+	var key := col.to_html()
+	for mi in inst.find_children("*", "MeshInstance3D", true, false):
+		var m: MeshInstance3D = mi
+		if not _car_mats.has(key):
+			var src := m.get_active_material(0) as StandardMaterial3D
+			var sm := ShaderMaterial.new()
+			var sh := Shader.new()
+			sh.code = PAINT_SHADER
+			sm.shader = sh
+			if src != null:
+				sm.set_shader_parameter("albedo_tex", src.albedo_texture)
+				if src.metallic_texture != null:
+					sm.set_shader_parameter("mr_tex", src.metallic_texture)
+					sm.set_shader_parameter("has_mr", true)
+				if src.normal_texture != null:
+					sm.set_shader_parameter("normal_tex", src.normal_texture)
+					sm.set_shader_parameter("has_normal", true)
+			sm.set_shader_parameter("team", col)
+			_car_mats[key] = sm
+		m.material_override = _car_mats[key]
+	# il modello è lungo 1,9 lungo X, centrato: lo porto a CAR_LEN, ruote sulla plancia
+	var k := CAR_LEN / 1.9
+	inst.scale = Vector3.ONE * k
+	inst.position.y = 0.283 * k
+	inst.rotation_degrees.y = CAR_YAW
+	return root
+
+const CAR_YAW := 180.0     # nel modello il muso guarda verso -X
+
+## Auto da corsa anni '60 costruita con forme semplici: muso a siluro, ruote scoperte, pilota col casco.
+static func _make_simple_car(col: Color, number: int) -> Node3D:
 	var root := Node3D.new()
 	var paint := StandardMaterial3D.new()
 	paint.albedo_color = col

@@ -48,6 +48,9 @@ GitHub Pages (la versione web si ricostruisce a ogni aggiornamento del ramo main
   erano nel modulo, se servono correzioni si cambia una riga.
 - **Avversari guidati dal computer** su tre livelli: Normale (a volte sbaglia), Difficile, Esperto
   (guarda anche il turno successivo). Nelle prove l'Esperto batte il Difficile e le Leggende.
+- **Auto 3D**: una monoposto anni '60 generata con Meshy (13.800 triangoli, texture 1024), ricolorata
+  da uno shader nei 12 colori delle scuderie: cambia solo la carrozzeria rossa, gomme, cromature e
+  pilota restano come sono (`assets/auto/monoposto.glb`, shader in `scripts/board3d.gd`).
 - **Gioco online** con Firebase.
 
 ## Comandi
