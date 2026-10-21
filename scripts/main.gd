@@ -1,7 +1,7 @@
 ## HEAT – versione digitale per uso personale: menu, partita, interfaccia e gioco online.
 extends Node3D
 
-const VERSION := "0.3 (21 ottobre)"
+const VERSION := "0.4 (21 ottobre)"
 const F_TITLE := preload("res://assets/font/RacingSansOne-Regular.ttf")
 const F_BODY := preload("res://assets/font/BarlowCondensed-Medium.ttf")
 const F_BOLD := preload("res://assets/font/BarlowCondensed-Bold.ttf")
@@ -63,6 +63,9 @@ var online_name: LineEdit
 var online_code: LineEdit
 var where_seg: HBoxContainer
 var champ := {}         # campionato in corso
+var history: Array = []   # replay: stato delle auto all'inizio della corsa e a fine di ogni turno
+var replay := {}
+var results_ov: Control
 var autoplay := false    # prove automatiche: i giocatori li guida il computer
 var AWAY_MS := 60000
 const CATCHUP_SPEED := 40.0
@@ -851,6 +854,7 @@ func _champ_race_game() -> Dictionary:
 
 func _start_race(game: Dictionary) -> void:
 	race_id += 1
+	replay["token"] = int(replay.get("token", 0)) + 1
 	racing = true
 	if splash_close.is_valid():
 		splash_close.call()
@@ -871,6 +875,7 @@ func _start_race(game: Dictionary) -> void:
 	log_box.clear()
 	board.show_track(t)
 	board.make_cars(R.cars)
+	history = [{"round": 0, "s": _cars_state(), "spun": []}]
 	_show_tokens()
 	_layout()
 	board.fit_view()
@@ -1098,6 +1103,7 @@ func _race_loop(my: int) -> void:
 		for c in arrived:
 			log_line("[color=#7CFF9A]%s taglia il traguardo: %d° posto![/color]" % [_car_tag(c), c["place"]])
 			board.hide_car(c["i"])
+		history.append({"round": R.round, "s": _cars_state(), "spun": R.cars.filter(func(c): return c.get("spun", false)).map(func(c): return c["i"])})
 		_update_standings()
 		if not online.is_empty():
 			online["done_round"] = R.round
@@ -1777,6 +1783,9 @@ func _played_row(car: Dictionary) -> HBoxContainer:
 
 # ---------- fine corsa ----------
 
+func _cars_state() -> Array:
+	return R.cars.map(func(c): return [c["s"], c["lane"], c["fin"]])
+
 func _show_results() -> void:
 	racing = false
 	board.highlight(-1)
@@ -1828,6 +1837,9 @@ func _show_results() -> void:
 			ov.queue_free()
 			_start_race(_local_game()))
 		br.add_child(again)
+	var rp := _big_button("Rivedi la corsa", Color(1, 1, 1, 0.15))
+	rp.pressed.connect(_start_replay)
+	br.add_child(rp)
 	var menu := _big_button("Torna ai box", Color(1, 1, 1, 0.15))
 	menu.pressed.connect(func():
 		ov.queue_free()
@@ -1835,7 +1847,93 @@ func _show_results() -> void:
 	br.add_child(menu)
 	v.add_child(br)
 	root.add_child(ov)
+	results_ov = ov
 	log_line("[color=#F0B429][b]Corsa finita![/b][/color] Vince %s." % _car_tag(R.finished[0]))
+
+# ---------- replay della corsa ----------
+
+const REPLAY_SPEEDS := [0.5, 1.0, 2.0, 4.0]
+
+func _start_replay() -> void:
+	if history.size() < 2:
+		return
+	if is_instance_valid(results_ov):
+		results_ov.visible = false
+	replay = {"k": 1, "playing": true, "speed": float(replay.get("speed", 1.0)), "token": int(replay.get("token", 0)) + 1}
+	board.highlight(-1)
+	board.follow = true
+	follow_btn.set_pressed_no_signal(true)
+	board.set_state(history[0]["s"])
+	_clear_dash()
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 12)
+	h.add_child(_title("Replay", 28, GOLD))
+	var info := _label("", 20, CREAM, F_BOLD)
+	info.name = "ReplayInfo"
+	info.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	info.autowrap_mode = TextServer.AUTOWRAP_OFF
+	h.add_child(info)
+	dash_v.add_child(h)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var play := _small_button("Pausa", Color("#6A3F8C"))
+	play.pressed.connect(func():
+		replay["playing"] = not replay["playing"]
+		play.text = "Pausa" if replay["playing"] else "Riprendi")
+	row.add_child(play)
+	row.add_child(_seg(["×0,5", "×1", "×2", "×4"], REPLAY_SPEEDS.find(replay["speed"]), func(k):
+		replay["speed"] = REPLAY_SPEEDS[k], 17))
+	var again := _small_button("Ricomincia", Color(1, 1, 1, 0.15))
+	again.pressed.connect(_start_replay)
+	row.add_child(again)
+	var back := _small_button("Torna alla classifica", RED)
+	back.pressed.connect(_end_replay)
+	row.add_child(back)
+	dash_v.add_child(row)
+	var bar := HSlider.new()
+	bar.name = "ReplayBar"
+	bar.min_value = 0
+	bar.max_value = history.size() - 1
+	bar.step = 1
+	bar.custom_minimum_size.x = 400
+	bar.drag_ended.connect(func(_c):
+		replay["k"] = maxi(1, int(bar.value))
+		board.set_state(history[replay["k"] - 1]["s"]))
+	dash_v.add_child(bar)
+	_show_dash(true)
+	_run_replay(replay["token"])
+
+func _end_replay() -> void:
+	replay["token"] = int(replay.get("token", 0)) + 1
+	board.set_state(history[-1]["s"])
+	_show_dash(false)
+	if is_instance_valid(results_ov):
+		results_ov.visible = true
+
+func _run_replay(token: int) -> void:
+	var total: int = history[-1]["round"]
+	while replay["token"] == token:
+		var info := dash_v.find_child("ReplayInfo", true, false) as Label
+		var bar := dash_v.find_child("ReplayBar", true, false) as HSlider
+		if replay["k"] >= history.size():
+			if info:
+				info.text = "Replay concluso · %d turni" % total
+			await get_tree().process_frame
+			continue
+		if not replay["playing"]:
+			await get_tree().process_frame
+			continue
+		var a: Dictionary = history[replay["k"] - 1]
+		var b: Dictionary = history[replay["k"]]
+		if info:
+			info.text = "Turno %d di %d" % [b["round"], total]
+		if bar:
+			bar.set_value_no_signal(replay["k"])
+		_update_status("Replay · turno %d" % b["round"])
+		await board.animate_state(a["s"], b["s"], 1.6 / float(replay["speed"]), b["spun"])
+		if replay["token"] != token:
+			return
+		replay["k"] += 1
 
 ## Punti della corsa, classifica del campionato e cosa si porta alla gara successiva.
 func _champ_after_race() -> Control:
@@ -1910,6 +2008,7 @@ func _ask_menu() -> void:
 
 func _back_to_menu() -> void:
 	race_id += 1
+	replay["token"] = int(replay.get("token", 0)) + 1
 	racing = false
 	Engine.time_scale = 1.0
 	if not online.is_empty() and net:

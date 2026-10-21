@@ -456,6 +456,64 @@ func place_now(i: int, s: int, lane: int) -> void:
 	n.rotation = Vector3(0, heading(s), 0)
 	car_state[i] = {"s": s, "lane": lane}
 
+# ---------- replay ----------
+
+## Porta subito le auto in uno stato salvato: st[i] = [casella, corsia, nascosta].
+func set_state(st: Array) -> void:
+	for i in cars:
+		var n: Node3D = cars[i]
+		n.scale = Vector3.ONE
+		n.visible = not st[i][2]
+		if n.visible:
+			n.position = spot_pos(st[i][0], st[i][1])
+			n.rotation = Vector3(0, heading(st[i][0]), 0)
+		car_state[i] = {"s": st[i][0], "lane": st[i][1]}
+
+## Tutte le auto si muovono insieme da uno stato al successivo nello stesso tempo t:
+## chi ha fatto più strada va più veloce. Testacoda: l'auto gira su se stessa; chi arriva sparisce.
+func animate_state(a: Array, b: Array, t: float, spun: Array = []) -> void:
+	var lead := -1
+	for i in cars:
+		var n: Node3D = cars[i]
+		if a[i][2]:
+			n.visible = false
+			continue
+		var s0: int = a[i][0]
+		var s1: int = b[i][0]
+		var pts: Array = []
+		var angs: Array = []
+		for s in range(s0 + 1, s1):
+			pts.append(center_pos(s).lerp(spot_pos(s, b[i][1]), 0.35))
+			angs.append(heading(s))
+		if s1 != s0 or a[i][1] != b[i][1] or not b[i][2]:
+			pts.append(spot_pos(s1, b[i][1]))
+			angs.append(heading(s1))
+		var dt := t / maxf(1.0, pts.size())
+		var tw := create_tween()
+		var cur := n.rotation.y
+		for k in pts.size():
+			var ang: float = angs[k]
+			while ang - cur > PI:
+				ang -= TAU
+			while ang - cur < -PI:
+				ang += TAU
+			cur = ang
+			tw.tween_property(n, "position", pts[k], dt)
+			tw.parallel().tween_property(n, "rotation:y", ang, dt)
+		if spun.has(i):
+			tw.tween_property(n, "rotation:y", cur + TAU * 2, 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		if b[i][2]:
+			tw.tween_property(n, "scale", Vector3.ONE * 0.01, 0.3)
+			tw.tween_callback(func():
+				n.visible = false
+				n.scale = Vector3.ONE)
+		car_state[i] = {"s": s1, "lane": b[i][1]}
+		if lead < 0 or s1 > b[lead][0]:
+			lead = i
+	if follow and lead >= 0:
+		desired = spot_pos(b[lead][0], b[lead][1])
+	await get_tree().create_timer(t + (0.5 if not spun.is_empty() else 0.0)).timeout
+
 func hide_car(i: int) -> void:
 	if cars.has(i):
 		cars[i].visible = false

@@ -51,6 +51,9 @@ GitHub Pages (la versione web si ricostruisce a ogni aggiornamento del ramo main
 - **Auto 3D**: una monoposto anni '60 generata con Meshy (13.800 triangoli, texture 1024), ricolorata
   da uno shader nei 12 colori delle scuderie: cambia solo la carrozzeria rossa, gomme, cromature e
   pilota restano come sono (`assets/auto/monoposto.glb`, shader in `scripts/board3d.gd`).
+- **Replay**: a fine corsa «Rivedi la corsa» fa ripartire tutte le auto insieme turno per turno
+  (chi ha fatto più strada va più veloce, i testacoda si vedono), con pausa, velocità da ×0,5 a ×4,
+  barra per saltare a un turno e ritorno alla classifica.
 - **Gioco online** con Firebase.
 
 ## Comandi
