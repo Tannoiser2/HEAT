@@ -754,9 +754,13 @@ func _layout() -> void:
 		lx_box.position = Vector2(10, 10)
 		var pw := PANEL_W if not narrow else vs.x
 		var ph := vs.y if not narrow else vs.y * 0.34
+		var dh := DASH_H if dash.visible else 0.0
+		if dash.visible and narrow:
+			# su schermo stretto il cruscotto cresce quanto serve e la classifica si stringe
+			ph = vs.y * 0.24
+			dh = clampf(dash_v.get_combined_minimum_size().y + 26.0, DASH_H, vs.y * 0.66)
 		panel.position = Vector2(vs.x - pw, 0) if not narrow else Vector2(0, vs.y - ph)
 		panel.size = Vector2(pw, ph)
-		var dh := DASH_H if dash.visible else 0.0
 		var dw := vs.x - (pw if not narrow else 0.0)
 		dash.position = Vector2(0, vs.y - dh - (0.0 if not narrow else ph))
 		dash.size = Vector2(dw, dh)
@@ -1304,6 +1308,13 @@ func _play_events(my: int) -> void:
 
 # ---------- scelte del giocatore: marcia e carte ----------
 
+func _narrow() -> bool:
+	return get_viewport().get_visible_rect().size.x < 900
+
+## Larghezza delle carte quando la mano occupa tutta la riga (schermo stretto).
+func _card_w_full() -> float:
+	return clampf((get_viewport().get_visible_rect().size.x - 40.0) / 7.4, 34.0, 90.0)
+
 func _card_w(extra := 520.0) -> float:
 	var vs := get_viewport().get_visible_rect().size
 	var dw := vs.x - (PANEL_W if vs.x >= 900 else 0.0)
@@ -1356,11 +1367,17 @@ func _dash_header(car: Dictionary, text: String) -> HBoxContainer:
 	h.add_child(_swatch(Rules.COLORS[car["col"]], 24))
 	var t := _title(car["name"], 26, CREAM)
 	h.add_child(t)
-	var l := _label(text, 20, GOLD, F_BOLD)
+	var narrow := _narrow()
+	var l := _label(text, 17 if narrow else 20, GOLD, F_BOLD)
 	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if narrow:
+		l.autowrap_mode = TextServer.AUTOWRAP_OFF
+		l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		l.clip_text = true
+		t.add_theme_font_size_override("font_size", 22)
 	h.add_child(l)
-	var info := _label("Motore: %d Calore · mazzo %d · scarti %d" % [car["engine"], car["deck"].size(), car["discard"].size()], 18, Color(CREAM, 0.75))
+	var info := _label(("%d Calore · mazzo %d · scarti %d" if narrow else "Motore: %d Calore · mazzo %d · scarti %d") % [car["engine"], car["deck"].size(), car["discard"].size()], 14 if narrow else 18, Color(CREAM, 0.75))
 	info.autowrap_mode = TextServer.AUTOWRAP_OFF
 	info.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	h.add_child(info)
@@ -1400,16 +1417,19 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 			return
 		st["sel"] = st["sel"].filter(func(x): return x < car["hand"].size())
 		_clear_dash()
+		var narrow := _narrow()
 		dash_v.add_child(_dash_header(car, "Turno %d · scegli marcia e carte" % R.round))
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 14)
+		# schermo stretto: marce, mano e tasti uno sotto l'altro
+		var row: BoxContainer = VBoxContainer.new() if narrow else HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8 if narrow else 14)
 		# leva del cambio
 		var gears := VBoxContainer.new()
 		gears.add_theme_constant_override("separation", 4)
 		var gl := _label("MARCIA", 15, Color(CREAM, 0.6), F_BOLD)
-		gears.add_child(gl)
+		if not narrow:
+			gears.add_child(gl)
 		var gg := GridContainer.new()
-		gg.columns = 2
+		gg.columns = 4 if narrow else 2
 		gg.add_theme_constant_override("h_separation", 4)
 		gg.add_theme_constant_override("v_separation", 4)
 		for g in [1, 2, 3, 4]:
@@ -1417,8 +1437,8 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 			var b := Button.new()
 			b.toggle_mode = true
 			b.focus_mode = Control.FOCUS_NONE
-			b.text = "%dª" % g + (("\n%d Calore" % cost) if cost > 0 and cost < 99 else "")
-			b.custom_minimum_size = Vector2(70, 62)
+			b.text = "%dª" % g + ((("  %d Calore" if narrow else "\n%d Calore") % cost) if cost > 0 and cost < 99 else "")
+			b.custom_minimum_size = Vector2(96, 40) if narrow else Vector2(70, 62)
 			b.add_theme_font_override("font", F_TITLE)
 			b.add_theme_font_size_override("font_size", 22 if cost == 0 else 18)
 			b.button_pressed = g == st["g"]
@@ -1441,7 +1461,7 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 		for i in car["hand"].size():
 			var c: Dictionary = car["hand"][i]
 			var ok := Rules.playable(c)
-			var cv := _card_view(car, c, _card_w(560), st["sel"].has(i), not ok)
+			var cv := _card_view(car, c, _card_w_full() if narrow else _card_w(560), st["sel"].has(i), not ok)
 			if ok:
 				cv.mouse_filter = Control.MOUSE_FILTER_STOP
 				cv.gui_input.connect(func(ev):
@@ -1540,6 +1560,7 @@ func _ask_plan(car: Dictionary) -> Dictionary:
 		side.add_child(br)
 		row.add_child(side)
 		dash_v.add_child(row)
+		_layout.call_deferred()
 	rf["f"].call()
 	if board.follow:
 		board.focus(board.car_world(car["i"]), 15.0)
@@ -1590,7 +1611,7 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 			var c: Dictionary = pend[k]
 			_clear_dash()
 			dash_v.add_child(_dash_header(car, "Freni: scegli il valore"))
-			var hb := HBoxContainer.new()
+			var hb: BoxContainer = VBoxContainer.new() if _narrow() else HBoxContainer.new()
 			hb.add_theme_constant_override("separation", 14)
 			hb.add_child(_played_row(car))
 			var rv := VBoxContainer.new()
@@ -1642,7 +1663,7 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 			txt += "\nAccelerazione: +%d (uno per simbolo usato), conta per le curve." % int(car["sym"])
 		if dr > 0:
 			txt += "\nScatto: %d caselle libere fino a dietro l'auto davanti (non è velocità)." % dr
-		var hb := HBoxContainer.new()
+		var hb: BoxContainer = VBoxContainer.new() if _narrow() else HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 14)
 		hb.add_child(_played_row(car))
 		var rv := VBoxContainer.new()
@@ -1737,7 +1758,7 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 			for i in car["hand"].size():
 				var c: Dictionary = car["hand"][i]
 				var ok := R.can_throw(c)
-				var cv := _card_view(car, c, _card_w(300), sel.has(i), not ok)
+				var cv := _card_view(car, c, _card_w_full() if _narrow() else _card_w(300), sel.has(i), not ok)
 				if ok:
 					cv.mouse_filter = Control.MOUSE_FILTER_STOP
 					cv.gui_input.connect(func(ev):
@@ -1753,8 +1774,13 @@ func _ask_turn(my: int, car: Dictionary) -> Dictionary:
 			var bf := _big_button("Fine turno" if sel.is_empty() else "Scarta %d e fine turno" % sel.size(), RED, CREAM, 20)
 			bf.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			bf.pressed.connect(func(): decided.emit(sel.duplicate()))
-			hand.add_child(bf)
-			dash_v.add_child(hand)
+			if _narrow():
+				dash_v.add_child(hand)
+				dash_v.add_child(bf)
+			else:
+				hand.add_child(bf)
+				dash_v.add_child(hand)
+			_layout.call_deferred()
 		rf["f"].call()
 		var d = await decided
 		turn["d"] = d
