@@ -24,6 +24,7 @@ var follow := true
 var _drag := 0
 var _press := Vector2.ZERO
 var screen_shift := Vector2.ZERO
+var view_free := Vector2.ZERO     # parte dello schermo libera per la pista (0 = calcolata da screen_shift)
 var step_time := 0.12        # secondi per casella
 var ring: MeshInstance3D
 var ghost_nodes: Array = []
@@ -667,6 +668,9 @@ func fit_view() -> void:
 	var t := tan(deg_to_rad(cam.fov * 0.5))
 	var free_x: float = maxf(0.3, 1.0 - absf(screen_shift.x))
 	var free_y: float = maxf(0.3, 1.0 - absf(screen_shift.y))
+	if view_free != Vector2.ZERO:
+		free_x = maxf(0.1, view_free.x)
+		free_y = maxf(0.1, view_free.y)
 	var need_w := BOARD_W / (2.0 * t * aspect * free_x)
 	var need_h := board_h / (2.0 * t * free_y * sin(pitch))
 	dist = clampf(maxf(need_w, need_h) * 1.04, 6.0, 160.0)

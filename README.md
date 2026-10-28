@@ -56,6 +56,13 @@ GitHub Pages (la versione web si ricostruisce a ogni aggiornamento del ramo main
   barra per saltare a un turno e ritorno alla classifica.
 - **Gioco online** con Firebase.
 
+## Menu
+Il menu è la corsia dei box: asfalto scuro, bandiera a scacchi, oro e rosso delle scuderie anni '60.
+Le scelte sono in schede grandi (Partita, Auto in gara, Pista o Campionato, Moduli, Vista), su due
+colonne negli schermi larghi e su una in quelli stretti; a destra (in verticale: sopra) la finestra
+con l'anteprima 3D della pista, che si gira e si ingrandisce col mouse, i dati della pista e il tasto
+**Semaforo verde!**. Caratteri: Racing Sans One e Barlow Condensed (licenza SIL Open Font).
+
 ## Comandi
 - Trascina col tasto sinistro: ruota la vista. Destro o centrale (o Maiusc + sinistro): sposta.
 - Rotellina o pinch: zoom. **Segui** accompagna l'auto di turno, **Tutta** inquadra la pista.

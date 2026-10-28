@@ -1,7 +1,7 @@
 ## HEAT – versione digitale per uso personale: menu, partita, interfaccia e gioco online.
 extends Node3D
 
-const VERSION := "0.6 (21 ottobre)"
+const VERSION := "0.7 (28 ottobre)"
 const F_TITLE := preload("res://assets/font/RacingSansOne-Regular.ttf")
 const F_BODY := preload("res://assets/font/BarlowCondensed-Medium.ttf")
 const F_BOLD := preload("res://assets/font/BarlowCondensed-Bold.ttf")
@@ -32,8 +32,7 @@ var R: Rules
 var track: Track
 var ui: CanvasLayer
 var root: Control
-var setup_box: PanelContainer
-var setup_v: VBoxContainer
+var setup_box: Control
 var cars_box: VBoxContainer
 var track_grid: GridContainer
 var track_info: Label
@@ -143,8 +142,9 @@ func _section(t: String) -> Control:
 
 func _row(title: String, ctrl: Control, w := 120) -> HBoxContainer:
 	var r := HBoxContainer.new()
-	var l := _label(title, 19, Color(CREAM, 0.9))
+	var l := _label(title, 20, Color(CREAM, 0.75))
 	l.custom_minimum_size.x = w
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	l.autowrap_mode = TextServer.AUTOWRAP_OFF
 	r.add_child(l)
 	ctrl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -164,7 +164,7 @@ func _btn_styles(b: Button, on: Color, off: Color, radius := 5) -> void:
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 ## Gruppo di tasti a scelta singola.
-func _seg(options: Array, selected: int, on_change: Callable, size := 18) -> HBoxContainer:
+func _seg(options: Array, selected: int, on_change: Callable, size := 19) -> HBoxContainer:
 	var box := HBoxContainer.new()
 	box.add_theme_constant_override("separation", 3)
 	var group := ButtonGroup.new()
@@ -177,6 +177,7 @@ func _seg(options: Array, selected: int, on_change: Callable, size := 18) -> HBo
 		b.focus_mode = Control.FOCUS_NONE
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.add_theme_font_size_override("font_size", size)
+		b.custom_minimum_size.y = 40
 		_btn_styles(b, GOLD, Color(1, 1, 1, 0.08))
 		b.add_theme_color_override("font_pressed_color", INK)
 		b.add_theme_color_override("font_hover_pressed_color", INK)
@@ -333,55 +334,186 @@ func _input(ev: InputEvent) -> void:
 
 # ---------- menu di preparazione ----------
 
-func _build_setup() -> void:
-	setup_box = PanelContainer.new()
-	setup_box.add_theme_stylebox_override("panel", _style(ASPHALT, 12, 16))
-	root.add_child(setup_box)
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	setup_box.add_child(scroll)
-	setup_v = VBoxContainer.new()
-	setup_v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	setup_v.add_theme_constant_override("separation", 9)
-	scroll.add_child(setup_v)
-	_fill_setup()
+# ---------- menu di preparazione: box anni '60 ----------
 
-func _fill_setup() -> void:
-	for c in setup_v.get_children():
-		c.queue_free()
-	var v := setup_v
+const PIT := Color("#121214")       # asfalto della corsia box (sfondo del menu)
+const CARD_BG := Color("#212124")
+const MENU_M := 22.0
+const FRAME_B := 6
+
+var menu_backdrop: Backdrop
+var menu_header: Control
+var menu_scroll: ScrollContainer
+var menu_cols: HBoxContainer
+var menu_col_a: VBoxContainer
+var menu_col_b: VBoxContainer
+var menu_cards: Array = []          # [scheda, colonna preferita: 0, 1 o -1 = la più corta]
+var menu_side: VBoxContainer
+var menu_frame: PanelContainer
+var menu_side_rect := Rect2()
+var menu_two := false
+
+## Sfondo d'asfalto del menu con una finestra trasparente sull'anteprima 3D.
+class Backdrop extends Control:
+	var hole := Rect2()
+	var bg := Color.BLACK
+	func _draw() -> void:
+		if hole.size == Vector2.ZERO:
+			draw_rect(Rect2(Vector2.ZERO, size), bg)
+		else:
+			draw_rect(Rect2(0, 0, size.x, hole.position.y), bg)
+			draw_rect(Rect2(0, hole.end.y, size.x, size.y - hole.end.y), bg)
+			draw_rect(Rect2(0, hole.position.y, hole.position.x, hole.size.y), bg)
+			draw_rect(Rect2(hole.end.x, hole.position.y, size.x - hole.end.x, hole.size.y), bg)
+	func _has_point(p: Vector2) -> bool:
+		return not hole.has_point(p)
+
+## Bandierina a scacchi delle schede.
+func _flag(w := 26, h := 18) -> Control:
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var q := 6
+	for y in h:
+		for x in w:
+			img.set_pixel(x, y, CREAM if ((x / q) + (y / q)) % 2 == 0 else INK)
+	var tr := TextureRect.new()
+	tr.texture = ImageTexture.create_from_image(img)
+	tr.custom_minimum_size = Vector2(w, h)
+	tr.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return tr
+
+## Scheda del menu con titolo e bandierina; restituisce il contenitore delle righe.
+func _card(title: String, col: int) -> VBoxContainer:
+	var pc := PanelContainer.new()
+	var sb := _style(CARD_BG, 8, 16)
+	sb.content_margin_top = 12
+	sb.border_color = Color(CREAM, 0.16)
+	sb.set_border_width_all(2)
+	sb.border_width_top = 5
+	sb.border_color = Color(CREAM, 0.16)
+	pc.add_theme_stylebox_override("panel", sb)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 10)
+	pc.add_child(v)
 	var head := HBoxContainer.new()
-	var logo := _title("HEAT", 46, RED)
+	head.add_theme_constant_override("separation", 12)
+	head.add_child(_flag())
+	head.add_child(_title(title.to_upper(), 28, CREAM))
+	v.add_child(head)
+	(menu_col_a if col <= 0 else menu_col_b).add_child(pc)
+	menu_cards.append([pc, col])
+	return v
+
+func _build_setup() -> void:
+	setup_box = Control.new()
+	setup_box.set_anchors_preset(Control.PRESET_FULL_RECT)
+	setup_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(setup_box)
+	menu_backdrop = Backdrop.new()
+	menu_backdrop.bg = PIT
+	menu_backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	setup_box.add_child(menu_backdrop)
+	# ----- titolo e bandiera a scacchi -----
+	var hv := VBoxContainer.new()
+	hv.add_theme_constant_override("separation", 6)
+	hv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 14)
+	var logo := _title("HEAT", 56, RED)
 	logo.add_theme_color_override("font_outline_color", CREAM)
-	logo.add_theme_constant_override("outline_size", 6)
+	logo.add_theme_constant_override("outline_size", 8)
 	head.add_child(logo)
-	var sub := _label("Pedal to the Metal\nversione digitale", 18, CREAM, F_BOLD)
+	var sub := _label("Pedal to the Metal\nversione digitale", 21, CREAM, F_BOLD)
 	sub.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	sub.autowrap_mode = TextServer.AUTOWRAP_OFF
 	head.add_child(sub)
-	v.add_child(head)
-	v.add_child(_checker(12, 44))
-	# partita
-	v.add_child(_section("Partita"))
+	hv.add_child(head)
+	hv.add_child(_checker(14, 44))
+	menu_header = hv
+	setup_box.add_child(hv)
+	# ----- colonne delle schede -----
+	menu_scroll = ScrollContainer.new()
+	menu_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	setup_box.add_child(menu_scroll)
+	menu_cols = HBoxContainer.new()
+	menu_cols.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	menu_cols.add_theme_constant_override("separation", 18)
+	menu_scroll.add_child(menu_cols)
+	menu_col_a = VBoxContainer.new()
+	menu_col_b = VBoxContainer.new()
+	for c in [menu_col_a, menu_col_b]:
+		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		c.add_theme_constant_override("separation", 18)
+		menu_cols.add_child(c)
+	# ----- colonna della pista: anteprima, dati e via -----
+	menu_side = VBoxContainer.new()
+	menu_side.add_theme_constant_override("separation", 10)
+	setup_box.add_child(menu_side)
+	var cap := HBoxContainer.new()
+	cap.add_child(_title("LA PISTA", 30, GOLD))
+	var hint := _label("trascina per girare, rotella per lo zoom", 16, Color(CREAM, 0.55))
+	hint.autowrap_mode = TextServer.AUTOWRAP_OFF
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cap.add_child(hint)
+	menu_side.add_child(cap)
+	menu_frame = PanelContainer.new()
+	var fsb := StyleBoxFlat.new()
+	fsb.draw_center = false
+	fsb.border_color = CREAM
+	fsb.set_border_width_all(FRAME_B)
+	fsb.set_corner_radius_all(6)
+	menu_frame.add_theme_stylebox_override("panel", fsb)
+	menu_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	menu_frame.item_rect_changed.connect(_menu_hole)
+	menu_side.add_child(menu_frame)
+	track_info = _label("", 18, Color(CREAM, 0.85))
+	track_info.custom_minimum_size.y = 50
+	menu_side.add_child(track_info)
+	var go := _big_button("Semaforo verde!", RED, CREAM, 38)
+	go.custom_minimum_size.y = 76
+	var gsb := _style(RED, 8, 6)
+	gsb.border_color = CREAM
+	gsb.set_border_width_all(3)
+	go.add_theme_stylebox_override("normal", gsb)
+	var gh := gsb.duplicate()
+	gh.bg_color = RED.lightened(0.12)
+	go.add_theme_stylebox_override("hover", gh)
+	go.pressed.connect(_on_start_pressed)
+	menu_side.add_child(go)
+	var ver := _label("Versione %s · gioco base, Leggende, meteo e strada, Garage, Campionato, Heavy Rain, Tunnel Vision, Rocky Roads e Legends." % VERSION, 14, Color(CREAM, 0.45))
+	menu_side.add_child(ver)
+	_fill_setup()
+
+func _fill_setup() -> void:
+	for pair in menu_cards:
+		(pair[0] as Control).queue_free()
+	menu_cards.clear()
+	# ----- partita -----
+	var v := _card("Partita", 0)
 	where_seg = _seg(["Su questo dispositivo", "Online"], 1 if online_box and online_box.visible else 0, func(i):
-		online_box.visible = i == 1)
+		online_box.visible = i == 1
+		_menu_rebalance())
 	v.add_child(_row("Dove", where_seg))
 	_build_online_box(v)
 	v.add_child(_row("Tipo", _seg(["Corsa singola", "Campionato"], cfg["mode"], func(i):
 		cfg["mode"] = i
 		_save_prefs()
 		_fill_setup())))
-	# auto
-	v.add_child(_section("Auto in gara"))
+	# ----- auto -----
+	v = _card("Auto in gara", 0)
 	var ncars: Array = []
 	for k in range(2, (Rules.MAX_CARS if cfg["lx"] > 0 else Rules.PLAYER_COLORS) + 1):
 		ncars.append(str(k))
 	v.add_child(_row("Auto", _seg(ncars, cfg["n"] - 2, func(i):
 		cfg["n"] = i + 2
 		_fill_cars()
-		_save_prefs(), 15 if ncars.size() > 7 else 18)))
+		_save_prefs(), 16 if ncars.size() > 7 else 19)))
 	cars_box = VBoxContainer.new()
-	cars_box.add_theme_constant_override("separation", 4)
+	cars_box.add_theme_constant_override("separation", 6)
 	v.add_child(cars_box)
 	_fill_cars()
 	v.add_child(_row("Computer", _seg(LEVEL_NAMES, cfg["cpu"], func(i):
@@ -402,7 +534,7 @@ func _fill_setup() -> void:
 			cfg["lx"] = i + 1
 			_save_prefs()
 			_fill_setup())))
-		v.add_child(_label(LX_LEVEL_TXT[cfg["lx"] - 1], 15, Color(CREAM, 0.6)))
+		v.add_child(_hint(LX_LEVEL_TXT[cfg["lx"] - 1]))
 		if cfg["lx"] >= 2:
 			v.add_child(_row("Rivali", _seg(["No", "Sì"], 1 if cfg["riv"] else 0, func(i):
 				cfg["riv"] = i == 1
@@ -410,97 +542,168 @@ func _fill_setup() -> void:
 		if cfg["mode"] == 1:
 			v.add_child(_row("Campionato", _seg(["Livello fisso", "+1 a ogni gara"], 1 if cfg["lxup"] else 0, func(i):
 				cfg["lxup"] = i == 1
-				_save_prefs(), 16)))
+				_save_prefs())))
 	if cfg["mode"] == 1:
-		_fill_champ_setup(v)
-		return
-	# pista
-	v.add_child(_section("Pista"))
-	track_grid = GridContainer.new()
-	track_grid.columns = 2
-	track_grid.add_theme_constant_override("h_separation", 4)
-	track_grid.add_theme_constant_override("v_separation", 4)
-	v.add_child(track_grid)
-	var group := ButtonGroup.new()
-	for t in Track.all():
-		var b := Button.new()
-		b.toggle_mode = true
-		b.button_group = group
-		b.focus_mode = Control.FOCUS_NONE
-		b.text = "%s  ·  %s" % [t.name, EXPANSION.get(t.key, "")]
-		b.button_pressed = t.key == cfg["track"]
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.add_theme_font_size_override("font_size", 17)
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		_btn_styles(b, GOLD, Color(1, 1, 1, 0.08))
-		b.add_theme_color_override("font_pressed_color", INK)
-		b.add_theme_color_override("font_hover_pressed_color", INK)
-		var key: String = t.key
-		b.pressed.connect(func():
-			cfg["track"] = key
+		_fill_champ_setup()
+	else:
+		# ----- pista -----
+		v = _card("Pista", 1)
+		track_grid = GridContainer.new()
+		track_grid.columns = 2
+		track_grid.add_theme_constant_override("h_separation", 5)
+		track_grid.add_theme_constant_override("v_separation", 5)
+		v.add_child(track_grid)
+		var group := ButtonGroup.new()
+		for t in Track.all():
+			var b := Button.new()
+			b.toggle_mode = true
+			b.button_group = group
+			b.focus_mode = Control.FOCUS_NONE
+			b.text = "%s  ·  %s" % [t.name, EXPANSION.get(t.key, "")]
+			b.button_pressed = t.key == cfg["track"]
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.custom_minimum_size.y = 42
+			b.add_theme_font_size_override("font_size", 18)
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			_btn_styles(b, GOLD, Color(1, 1, 1, 0.08))
+			b.add_theme_color_override("font_pressed_color", INK)
+			b.add_theme_color_override("font_hover_pressed_color", INK)
+			var key: String = t.key
+			b.pressed.connect(func():
+				cfg["track"] = key
+				_save_prefs()
+				_preview_track())
+			track_grid.add_child(b)
+		v.add_child(_row("Giri", _seg(["Da tabellone", "1", "2", "3"], cfg["laps"], func(i):
+			cfg["laps"] = i
 			_save_prefs()
-			_preview_track())
-		track_grid.add_child(b)
-	track_info = _label("", 17, Color(CREAM, 0.8))
-	v.add_child(track_info)
-	v.add_child(_row("Giri", _seg(["Da tabellone", "1", "2", "3"], cfg["laps"], func(i):
-		cfg["laps"] = i
-		_save_prefs()
-		_update_track_info())))
-	# moduli
-	v.add_child(_section("Moduli"))
-	v.add_child(_row("Meteo", _seg(["No", "Meteo e condizioni della strada"], 1 if cfg["weather"] else 0, func(i):
-		cfg["weather"] = i == 1
-		_save_prefs())))
-	v.add_child(_row("Garage", _seg(["Carte iniziali", "3 a caso", "Draft", "Draft completo"], cfg["garage"], func(i):
-		cfg["garage"] = i
-		_save_prefs(), 16)))
-	v.add_child(_label("Garage: ogni auto monta 3 potenziamenti al posto delle carte iniziali. «Draft completo» usa anche le carte avanzate e quelle delle espansioni.", 15, Color(CREAM, 0.6)))
-	v.add_child(_row("Leggende\naggressive", _seg(["Sì (frecce sui rombi)", "No"], 0 if cfg["chev"] else 1, func(i):
-		cfg["chev"] = i == 0
-		_save_prefs())))
+			_update_track_info())))
+		# ----- moduli -----
+		v = _card("Moduli", 1)
+		v.add_child(_row("Meteo", _seg(["No", "Sì"], 1 if cfg["weather"] else 0, func(i):
+			cfg["weather"] = i == 1
+			_save_prefs())))
+		v.add_child(_hint("Gettoni meteo e condizioni della strada accanto alle curve.", 120))
+		v.add_child(_row("Garage", _seg(["Carte iniziali", "3 a caso", "Draft", "Draft completo"], cfg["garage"], func(i):
+			cfg["garage"] = i
+			_save_prefs(), 17)))
+		v.add_child(_hint("Ogni auto monta 3 potenziamenti al posto delle carte iniziali. «Draft completo» usa anche le carte avanzate e quelle delle espansioni.", 120))
+		v.add_child(_row("Aggressive", _seg(["Sì", "No"], 0 if cfg["chev"] else 1, func(i):
+			cfg["chev"] = i == 0
+			_save_prefs())))
+		v.add_child(_hint("Leggende aggressive: frecce sui rombi.", 120))
+	# ----- vista -----
+	v = _card("Vista", -1)
 	v.add_child(_row("Animazioni", _seg(ANIM_NAMES, cfg["anim"], func(i):
 		cfg["anim"] = i
 		board.step_time = ANIM_STEP[i]
 		_save_prefs())))
 	board.step_time = ANIM_STEP[cfg["anim"]]
-	_setup_footer(v)
+	_menu_rebalance()
 
-func _setup_footer(v: VBoxContainer) -> void:
-	var go := _big_button("Semaforo verde!", RED, CREAM, 28)
-	go.pressed.connect(_on_start_pressed)
-	v.add_child(go)
-	var ver := _label("Versione %s · regole del gioco base, Leggende, meteo e strada, Garage e Campionato, espansioni Heavy Rain, Tunnel Vision, Rocky Roads e Legends." % VERSION, 14, Color(CREAM, 0.45))
-	v.add_child(ver)
+## Spiegazione piccola sotto una riga del menu.
+func _hint(t: String, indent := 0) -> Control:
+	var l := _label(t, 16, Color(CREAM, 0.6))
+	if indent == 0:
+		return l
+	var m := MarginContainer.new()
+	m.add_theme_constant_override("margin_left", indent)
+	m.add_child(l)
+	return m
 
-func _fill_champ_setup(v: VBoxContainer) -> void:
-	v.add_child(_section("Campionato"))
+func _fill_champ_setup() -> void:
+	var v := _card("Campionato", 1)
 	v.add_child(_row("Stagione", _seg(SEASONS, cfg["season"], func(i):
 		cfg["season"] = i
 		_save_prefs()
-		_fill_setup(), 15)))
+		_fill_setup(), 16)))
 	var races := _season_events(cfg["season"], 0)
 	var lines: Array = []
 	for e in races:
 		lines.append("%d. %s – %s" % [e["r"], Track.by_key(e["t"]).name, e["name"]] if cfg["season"] < 6 else "%d. pista ed evento a sorpresa" % e["r"])
-	v.add_child(_label("\n".join(lines), 17, Color(CREAM, 0.8)))
-	v.add_child(_label("Prima di ogni gara ognuno monta un potenziamento nuovo (e tiene quelli vecchi); si corre sempre con meteo e condizioni della strada, sponsor e curve della stampa. Punti: 9, 6, 4, 3, 2, 1.", 15, Color(CREAM, 0.6)))
+	v.add_child(_label("\n".join(lines), 18, Color(CREAM, 0.85)))
+	v.add_child(_hint("Prima di ogni gara ognuno monta un potenziamento nuovo (e tiene quelli vecchi); si corre sempre con meteo e condizioni della strada, sponsor e curve della stampa. Punti: 9, 6, 4, 3, 2, 1."))
 	v.add_child(_row("Potenziamenti", _seg(["Normali", "Avanzati", "Tutti"], cfg["pool"], func(i):
 		cfg["pool"] = i
-		_save_prefs(), 16)))
-	v.add_child(_row("Leggende\naggressive", _seg(["Sì", "No"], 0 if cfg["chev"] else 1, func(i):
-		cfg["chev"] = i == 0
 		_save_prefs())))
-	v.add_child(_row("Animazioni", _seg(ANIM_NAMES, cfg["anim"], func(i):
-		cfg["anim"] = i
-		board.step_time = ANIM_STEP[i]
+	v.add_child(_row("Aggressive", _seg(["Sì", "No"], 0 if cfg["chev"] else 1, func(i):
+		cfg["chev"] = i == 0
 		_save_prefs())))
 	if not races.is_empty():
 		var k: String = races[0]["t"]
 		if track == null or track.key != k:
 			cfg["track"] = k
 			_preview_track()
-	_setup_footer(v)
+
+## Schede su due colonne (schermo largo) o su una; la scheda «libera» va nella colonna più corta.
+func _menu_arrange(two: bool) -> void:
+	menu_two = two
+	var h := [0.0, 0.0]
+	for pair in menu_cards:
+		if pair[1] >= 0 and is_instance_valid(pair[0]):
+			h[pair[1] if two else 0] += (pair[0] as Control).get_combined_minimum_size().y
+	for pair in menu_cards:
+		var card: Control = pair[0]
+		if not is_instance_valid(card):
+			continue
+		var col: int = pair[1]
+		if col < 0:
+			col = 0 if h[0] <= h[1] else 1
+		var dest: VBoxContainer = menu_col_b if two and col == 1 else menu_col_a
+		if card.get_parent() != dest:
+			card.get_parent().remove_child(card)
+			dest.add_child(card)
+	# l'ordine delle schede resta quello di costruzione
+	for pair in menu_cards:
+		var card: Control = pair[0]
+		if is_instance_valid(card):
+			card.get_parent().move_child(card, -1)
+	menu_col_b.visible = two
+
+func _menu_rebalance() -> void:
+	if menu_col_a != null:
+		(func(): _menu_arrange(menu_two)).call_deferred()
+
+## Titolo in alto, schede a sinistra, pista e via a destra (in verticale: pista sopra, schede sotto).
+func _menu_layout(vs: Vector2) -> void:
+	var m := MENU_M
+	var head_h := menu_header.get_combined_minimum_size().y
+	menu_header.position = Vector2(m, m * 0.6)
+	menu_header.size = Vector2(vs.x - 2 * m, head_h)
+	var top := m * 0.6 + head_h + 18
+	var avail_h := vs.y - top - m - 14
+	if vs.x >= vs.y * 1.05:
+		var side_w := clampf(vs.x * 0.36, 340.0, 660.0)
+		menu_side_rect = Rect2(vs.x - m - side_w, top, side_w, avail_h)
+		menu_scroll.position = Vector2(m, top)
+		menu_scroll.size = Vector2(vs.x - side_w - 3 * m, avail_h)
+	else:
+		var side_h := clampf(avail_h * 0.42, 260.0, 560.0)
+		menu_side_rect = Rect2(m, top, vs.x - 2 * m, side_h)
+		menu_scroll.position = Vector2(m, top + side_h + m)
+		menu_scroll.size = Vector2(vs.x - 2 * m, avail_h - side_h - m)
+	_menu_arrange(menu_scroll.size.x >= 900)
+	menu_side.position = menu_side_rect.position
+	menu_side.size = menu_side_rect.size
+	_menu_hole.call_deferred()
+
+## Finestra dell'anteprima: buco nell'asfalto e inquadratura della pista al suo interno.
+func _menu_hole() -> void:
+	if not setup_box.visible or menu_frame == null:
+		menu_backdrop.hole = Rect2()
+		menu_backdrop.queue_redraw()
+		return
+	if menu_side.size != menu_side_rect.size:
+		menu_side.size = menu_side_rect.size
+	var r := menu_frame.get_global_rect().grow(-FRAME_B + 1)
+	menu_backdrop.hole = r
+	menu_backdrop.queue_redraw()
+	var vs := get_viewport().get_visible_rect().size
+	var c := r.get_center() / vs
+	board.screen_shift = Vector2(1.0 - 2.0 * c.x, 1.0 - 2.0 * c.y)
+	board.view_free = r.size / vs
+	if track != null and not racing:
+		board.fit_view()
 
 ## Carte Evento di una stagione (6 = a sorpresa: 4 piste diverse con eventi a caso).
 func _season_events(season: int, seed_v: int) -> Array:
@@ -536,9 +739,9 @@ func _fill_cars() -> void:
 		var nm := LineEdit.new()
 		nm.placeholder_text = Rules.COLOR_NAMES[i]
 		nm.text = cfg["names"][i]
-		nm.custom_minimum_size.x = 104
+		nm.custom_minimum_size = Vector2(118, 40)
 		nm.max_length = 16
-		nm.add_theme_font_size_override("font_size", 17)
+		nm.add_theme_font_size_override("font_size", 18)
 		var idx: int = i
 		nm.text_changed.connect(func(t):
 			cfg["names"][idx] = t
@@ -557,7 +760,7 @@ func _fill_cars() -> void:
 			cfg["kind"][i] = 1
 		var seg := _seg(opts, k, func(j):
 			cfg["kind"][idx] = j if idx < Rules.PLAYER_COLORS else 2
-			_save_prefs(), 16)
+			_save_prefs(), 18)
 		seg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(seg)
 		cars_box.add_child(r)
@@ -741,16 +944,10 @@ func _layout() -> void:
 	var vs := get_viewport().get_visible_rect().size
 	var narrow := vs.x < 900
 	if setup_box.visible:
-		var w := minf(560.0, vs.x - 24.0) if not narrow else vs.x - 24.0
-		setup_box.position = Vector2(12, 12)
-		setup_box.size = Vector2(w, vs.y - 24 if not narrow else vs.y * 0.62)
-		if narrow:
-			setup_box.position = Vector2(12, vs.y * 0.38 - 12)
-			board.screen_shift = Vector2(0, -0.31)
-		else:
-			board.screen_shift = Vector2(-(w + 12) / vs.x, 0)
+		_menu_layout(vs)
 		lx_box.visible = false
 	else:
+		board.view_free = Vector2.ZERO
 		lx_box.position = Vector2(10, 10)
 		var pw := PANEL_W if not narrow else vs.x
 		var ph := vs.y if not narrow else vs.y * 0.34
